@@ -29,7 +29,8 @@ struct config;
 
 static void *thread_main(void *);
 static int connect_socket(thread *, connection *);
-static int reconnect_socket(thread *, connection *);
+static void schedule_reconnect(thread *, connection *);
+static int reconnect_socket(aeEventLoop *, long long, void *);
 
 static int calibrate(aeEventLoop *, long long, void *);
 static int sample_rate(aeEventLoop *, long long, void *);

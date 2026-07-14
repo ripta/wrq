@@ -72,6 +72,8 @@ typedef struct connection {
     size_t length;
     size_t written;
     uint64_t pending;
+    long long request_timer;
+    long long reconnect_timer;
     buffer headers;
     buffer body;
     char buf[RECVBUF];

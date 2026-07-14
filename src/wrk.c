@@ -274,6 +274,9 @@ void *thread_main(void *arg) {
         c->throughput = throughput;
         c->catch_up_throughput = throughput * 2;
         c->caught_up  = true;
+        c->request_timer = AE_NOMORE;
+        c->reconnect_timer = AE_NOMORE;
+        c->fd = -1;
         // Stagger connects 5 msec apart within thread:
         aeCreateTimeEvent(loop, i * 5, delayed_initial_connect, c, NULL);
     }
@@ -299,6 +302,7 @@ static int connect_socket(thread *thread, connection *c) {
     int fd, flags;
 
     fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+    if (fd == -1) goto error;
 
     flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -321,19 +325,42 @@ static int connect_socket(thread *thread, connection *c) {
 
   error:
     thread->errors.connect++;
-    close(fd);
+    if (fd >= 0) close(fd);
+    schedule_reconnect(thread, c);
     return -1;
 }
 
-static int reconnect_socket(thread *thread, connection *c) {
-    aeDeleteFileEvent(thread->loop, c->fd, AE_WRITABLE | AE_READABLE);
-    sock.close(c);
-    close(c->fd);
+static void schedule_reconnect(thread *thread, connection *c) {
+    aeEventLoop *loop = thread->loop;
+
+    if (c->request_timer != AE_NOMORE) {
+        aeDeleteTimeEvent(loop, c->request_timer);
+        c->request_timer = AE_NOMORE;
+    }
+
+    if (c->fd >= 0) {
+        aeDeleteFileEvent(loop, c->fd, AE_WRITABLE | AE_READABLE);
+        sock.close(c);
+        close(c->fd);
+        c->fd = -1;
+    }
+
     c->written = 0;
     c->batch_scheduled = false;
     c->pending = 0;
     c->has_pending = false;
-    return connect_socket(thread, c);
+
+    if (c->reconnect_timer == AE_NOMORE) {
+        c->reconnect_timer = aeCreateTimeEvent(
+                loop, 0, reconnect_socket, c, NULL);
+    }
+}
+
+static int reconnect_socket(aeEventLoop *loop, long long id, void *data) {
+    connection *c = data;
+    c->reconnect_timer = AE_NOMORE;
+    connect_socket(c->thread, c);
+    return AE_NOMORE;
 }
 
 static int delayed_initial_connect(aeEventLoop *loop, long long id, void *data) {
@@ -479,6 +506,7 @@ static int delay_request(aeEventLoop *loop, long long id, void *data) {
     if (time_usec_to_wait) {
         return round((time_usec_to_wait / 1000.0L) + 0.5); /* don't send, wait */
     }
+    c->request_timer = AE_NOMORE;
     aeCreateFileEvent(c->thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
     return AE_NOMORE;
 }
@@ -559,7 +587,7 @@ static int response_complete(http_parser *parser) {
 
 
     if (!http_should_keep_alive(parser)) {
-        if (!c->peer_closed) reconnect_socket(thread, c);
+        if (!c->peer_closed) schedule_reconnect(thread, c);
         goto done;
     }
 
@@ -590,7 +618,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
 
   error:
     c->thread->errors.connect++;
-    reconnect_socket(c->thread, c);
+    schedule_reconnect(c->thread, c);
 
 }
 
@@ -601,12 +629,14 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     if (!c->batch_scheduled) {
         uint64_t time_usec_to_wait = usec_to_next_send(c);
         if (time_usec_to_wait) {
-            int msec_to_wait = round((time_usec_to_wait / 1000.0L) + 0.5);
-
             // Not yet time to send. Delay:
             aeDeleteFileEvent(loop, fd, AE_WRITABLE);
-            aeCreateTimeEvent(
-                    thread->loop, msec_to_wait, delay_request, c, NULL);
+            if (c->request_timer == AE_NOMORE) {
+                int msec_to_wait = round(
+                        (time_usec_to_wait / 1000.0L) + 0.5);
+                c->request_timer = aeCreateTimeEvent(
+                        thread->loop, msec_to_wait, delay_request, c, NULL);
+            }
             return;
         }
         c->latest_write = time_us();
@@ -650,7 +680,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 
   error:
     thread->errors.write++;
-    reconnect_socket(thread, c);
+    schedule_reconnect(thread, c);
 }
 
 
@@ -674,7 +704,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
         if (c->peer_closed) {
             c->peer_closed = false;
             if (c->has_pending) c->thread->errors.read++;
-            reconnect_socket(c->thread, c);
+            schedule_reconnect(c->thread, c);
             return;
         }
     } while (n == RECVBUF && sock.readable(c) > 0);
@@ -684,7 +714,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
   error:
     c->peer_closed = false;
     c->thread->errors.read++;
-    reconnect_socket(c->thread, c);
+    schedule_reconnect(c->thread, c);
 }
 
 static uint64_t time_us() {
