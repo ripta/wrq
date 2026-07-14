@@ -351,9 +351,32 @@ static void schedule_reconnect(thread *thread, connection *c) {
     c->has_pending = false;
 
     if (c->reconnect_timer == AE_NOMORE) {
+        long long delay = reconnect_delay(c);
         c->reconnect_timer = aeCreateTimeEvent(
-                loop, 0, reconnect_socket, c, NULL);
+                loop, delay, reconnect_socket, c, NULL);
+        if (c->reconnect_timer != AE_ERR &&
+                c->reconnect_failures != UINT64_MAX) {
+            c->reconnect_failures++;
+        }
     }
+}
+
+static long long reconnect_delay(connection *c) {
+    if (c->reconnect_failures == 0) return 0;
+
+    uint64_t delay = RECONNECT_BACKOFF_MIN_MS;
+    uint64_t failures = c->reconnect_failures;
+
+    while (--failures && delay < RECONNECT_BACKOFF_MAX_MS) {
+        delay = MIN(delay * 2, RECONNECT_BACKOFF_MAX_MS);
+    }
+
+    uint64_t jitter = (delay * RECONNECT_BACKOFF_JITTER) / 100;
+    uint64_t range = (jitter * 2) + 1;
+    uint64_t random = tinymt64_generate_uint64(&c->thread->rand);
+    uint64_t randomized = delay - jitter + (random % range);
+
+    return MIN(randomized, RECONNECT_BACKOFF_MAX_MS);
 }
 
 static int reconnect_socket(aeEventLoop *loop, long long id, void *data) {
@@ -519,6 +542,7 @@ static int response_complete(http_parser *parser) {
 
     thread->complete++;
     thread->requests++;
+    c->reconnect_failures = 0;
 
     if (status > 399) {
         thread->errors.status++;

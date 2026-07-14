@@ -24,6 +24,9 @@
 #define SOCKET_TIMEOUT_MS   2000
 #define CALIBRATE_DELAY_MS  10000
 #define TIMEOUT_INTERVAL_MS 2000
+#define RECONNECT_BACKOFF_MIN_MS 10
+#define RECONNECT_BACKOFF_MAX_MS 1000
+#define RECONNECT_BACKOFF_JITTER 20
 
 typedef struct {
     pthread_t thread;
@@ -72,6 +75,7 @@ typedef struct connection {
     size_t length;
     size_t written;
     uint64_t pending;
+    uint64_t reconnect_failures;
     long long request_timer;
     long long reconnect_timer;
     buffer headers;
