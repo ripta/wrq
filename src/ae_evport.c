@@ -58,7 +58,7 @@ static int evport_debug = 0;
  * time aeApiPoll is invoked.
  *
  * To summarize, in this module, each fd association is EITHER (a) represented
- * only via the in-kernel assocation OR (b) represented by pending_fds and
+ * only via the in-kernel association OR (b) represented by pending_fds and
  * pending_masks.  (b) is only true for the last fds we returned from aeApiPoll,
  * and only until we enter aeApiPoll again (at which point we restore the
  * in-kernel association).
@@ -227,7 +227,7 @@ static void aeApiDelEvent(aeEventLoop *eventLoop, int fd, int mask) {
         /*
          * ENOMEM is a potentially transient condition, but the kernel won't
          * generally return it unless things are really bad.  EAGAIN indicates
-         * we've reached an resource limit, for which it doesn't make sense to
+         * we've reached a resource limit, for which it doesn't make sense to
          * retry (counterintuitively).  All other errors indicate a bug.  In any
          * of these cases, the best we can do is to abort.
          */

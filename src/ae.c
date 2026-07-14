@@ -45,7 +45,7 @@
 #include "config.h"
 
 /* Include the best multiplexing layer supported by this system.
- * The following should be ordered by performances, descending. */
+ * The following should be ordered by performance, descending. */
 #ifdef HAVE_EVPORT
 #include "ae_evport.c"
 #else
@@ -212,7 +212,7 @@ int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
 }
 
 /* Search the first timer to fire.
- * This operation is useful to know how many time the select can be
+ * This operation is useful to know how many times the select can be
  * put in sleep without to delay any event.
  * If there are no timers NULL is returned.
  *
@@ -309,10 +309,10 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 /* Process every pending time event, then every pending file event
  * (that may be registered by time event callbacks just processed).
  * Without special flags the function sleeps until some file event
- * fires, or when the next time event occurrs (if any).
+ * fires, or when the next time event occurs (if any).
  *
  * If flags is 0, the function does nothing and returns.
- * if flags has AE_ALL_EVENTS set, all the kind of events are processed.
+ * if flags has AE_ALL_EVENTS set, all kinds of events are processed.
  * if flags has AE_FILE_EVENTS set, file events are processed.
  * if flags has AE_TIME_EVENTS set, time events are processed.
  * if flags has AE_DONT_WAIT set the function returns ASAP until all
@@ -356,7 +356,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             if (tvp->tv_usec < 0) tvp->tv_usec = 0;
         } else {
             /* If we have to check for events but need to return
-             * ASAP because of AE_DONT_WAIT we need to se the timeout
+             * ASAP because of AE_DONT_WAIT we need to set the timeout
              * to zero */
             if (flags & AE_DONT_WAIT) {
                 tv.tv_sec = tv.tv_usec = 0;
@@ -376,7 +376,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
 	    /* note the fe->mask & mask & ... code: maybe an already processed
              * event removed an element that fired and we still didn't
-             * processed, so we check if the event is still valid. */
+             * process, so we check if the event is still valid. */
             if (fe->mask & mask & AE_READABLE) {
                 rfired = 1;
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
@@ -395,7 +395,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     return processed; /* return the number of processed file/time events */
 }
 
-/* Wait for millseconds until the given file descriptor becomes
+/* Wait for milliseconds until the given file descriptor becomes
  * writable/readable/exception */
 int aeWait(int fd, int mask, long long milliseconds) {
     struct pollfd pfd;

@@ -458,7 +458,7 @@ static uint64_t usec_to_next_send(connection *c) {
                 (complete_since_catch_up_start / c->catch_up_throughput);
 
         if (next_start_time > now) {
-            // Not yet time to send, even at catch-up throughout:
+            // Not yet time to send, even at catch-up throughput:
             send_now = false;
         }
     }
@@ -511,7 +511,7 @@ static int response_complete(http_parser *parser) {
     // Note that expected start time is computed based on the completed
     // response count seen at the beginning of the last request batch sent.
     // A single request batch send may contain multiple requests, and
-    // result in multiple responses. If we incorrectly calculated expect
+    // result in multiple responses. If we incorrectly calculated expected
     // start time based on the completion count of these individual pipelined
     // requests we can easily end up "gifting" them time and seeing
     // negative latencies.
@@ -522,8 +522,8 @@ static int response_complete(http_parser *parser) {
 
     if (expected_latency_timing < 0) {
         printf("\n\n ---------- \n\n");
-        printf("We are about to crash and die (recoridng a negative #)");
-        printf("This wil never ever ever happen...");
+        printf("We are about to crash and die (recording a negative #)");
+        printf("This will never ever ever happen...");
         printf("But when it does. The following information will help in debugging");
         printf("response_complete:\n");
         printf("  expected_latency_timing = %"PRId64"\n", expected_latency_timing);
@@ -550,7 +550,7 @@ static int response_complete(http_parser *parser) {
         aeCreateFileEvent(thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
     }
 
-    // Record if needed, either last in batch or all, depending in cfg:
+    // Record if needed, either last in batch or all, depending on cfg:
     if (cfg.record_all_responses || !c->has_pending) {
         hdr_record_value(thread->latency_histogram, expected_latency_timing);
 

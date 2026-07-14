@@ -4,7 +4,7 @@
  * as explained at http://creativecommons.org/publicdomain/zero/1.0/
  *
  * This code follows the Plan 9 approach to header declaration.  In order
- * to maintain fast builds does not define it's dependent headers.
+ * to maintain fast builds does not define its dependent headers.
  * They should be included manually by the user.  This code requires:
  *
  * - #include <stdint.h>
@@ -38,8 +38,8 @@ struct hdr_histogram
  * Allocate the memory and initialise the hdr_histogram.
  *
  * Due to the size of the histogram being the result of some reasonably
- * involved math on the input parameters this function it is tricky to stack allocate.
- * The histogram is allocated in a single contigious block so can be delete via free,
+ * involved math on the input parameters, this function is tricky to stack allocate.
+ * The histogram is allocated in a single contiguous block so it can be freed with free,
  * without any structure specific destructor.
  *
  * @param lowest_trackable_value The smallest possible value to be put into the
@@ -72,7 +72,7 @@ int hdr_alloc(int64_t highest_trackable_value, int significant_figures, struct h
 /**
  * Reset a histogram to zero - empty out a histogram and re-initialise it
  *
- * If you want to re-use an existing histogram, but reset everthing back to zero, this
+ * If you want to re-use an existing histogram, but reset everything back to zero, this
  * is the routine to use.
  *
  * @param h The histogram you want to reset to empty.
@@ -89,8 +89,8 @@ void hdr_reset(struct hdr_histogram *h);
 size_t hdr_get_memory_size(struct hdr_histogram *h);
 
 /**
- * Records a value in the histogram, will round this value of to a precision at or better
- * than the significant_figure specified at contruction time.
+ * Records a value in the histogram, and will round this value off to a precision at or better
+ * than the significant_figures specified at construction time.
  *
  * @param h "This" pointer
  * @param value Value to add to the histogram
@@ -100,8 +100,8 @@ size_t hdr_get_memory_size(struct hdr_histogram *h);
 bool hdr_record_value(struct hdr_histogram* h, int64_t value);
 
 /**
- * Records count values in the histogram, will round this value of to a
- * precision at or better than the significant_figure specified at contruction
+ * Records count values in the histogram, and will round this value off to a
+ * precision at or better than the significant_figures specified at construction
  * time.
  *
  * @param h "This" pointer
@@ -115,11 +115,11 @@ bool hdr_record_values(struct hdr_histogram* h, int64_t value, int64_t count);
 /**
  * Record a value in the histogram and backfill based on an expected interval.
  *
- * Records a value in the histogram, will round this value of to a precision at or better
- * than the significant_figure specified at contruction time.  This is specifically used
+ * Records a value in the histogram, and will round this value off to a precision at or better
+ * than the significant_figures specified at construction time.  This is specifically used
  * for recording latency.  If the value is larger than the expected_interval then the
- * latency recording system has experienced co-ordinated omission.  This method fill in the
- * values that would of occured had the client providing the load not been blocked.
+ * latency recording system has experienced co-ordinated omission.  This method fills in the
+ * values that would have occurred had the client providing the load not been blocked.
 
  * @param h "This" pointer
  * @param value Value to add to the histogram
@@ -127,12 +127,12 @@ bool hdr_record_values(struct hdr_histogram* h, int64_t value, int64_t count);
  * @return false if the value is larger than the highest_trackable_value and can't be recorded,
  * true otherwise.
  */
-bool hdr_record_corrected_value(struct hdr_histogram* h, int64_t value, int64_t expexcted_interval);
+bool hdr_record_corrected_value(struct hdr_histogram* h, int64_t value, int64_t expected_interval);
 
 /**
  * Adds all of the values from 'from' to 'this' histogram.  Will return the
  * number of values that are dropped when copying.  Values will be dropped
- * if they around outside of h.lowest_trackable_value and
+ * if they are outside of h.lowest_trackable_value and
  * h.highest_trackable_value.
  *
  * @param h "This" pointer
@@ -153,7 +153,7 @@ int64_t hdr_lowest_equivalent_value(struct hdr_histogram* h, int64_t value);
 int64_t hdr_count_at_value(struct hdr_histogram* h, int64_t value);
 
 /**
- * The basic iterator.  This is the equivlent of the
+ * The basic iterator.  This is the equivalent of the
  * AllValues iterator from the Java implementation.  It iterates
  * through all entries in the histogram whether or not a value
  * is recorded.
@@ -170,7 +170,7 @@ struct hdr_iter
 };
 
 /**
- * Initalises the basic iterator.
+ * Initialises the basic iterator.
  *
  * @param itr 'This' pointer
  * @param h The histogram to iterate over
@@ -178,7 +178,7 @@ struct hdr_iter
 void hdr_iter_init(struct hdr_iter* iter, struct hdr_histogram* h);
 /**
  * Iterate to the next value for the iterator.  If there are no more values
- * available return faluse.
+ * available return false.
  *
  * @param itr 'This' pointer
  * @return 'false' if there are no values remaining for this iterator.
