@@ -428,8 +428,9 @@ static int check_timeouts(aeEventLoop *loop, long long id, void *data) {
     uint64_t maxAge = now - (cfg.timeout * 1000);
 
     for (uint64_t i = 0; i < thread->connections; i++, c++) {
-        if (maxAge > c->start) {
+        if (c->has_pending && maxAge > c->start) {
             thread->errors.timeout++;
+            schedule_reconnect(thread, c);
         }
     }
 
