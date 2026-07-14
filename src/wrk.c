@@ -273,7 +273,6 @@ void *thread_main(void *arg) {
         c->length     = length;
         c->throughput = throughput;
         c->catch_up_throughput = throughput * 2;
-        c->complete   = 0;
         c->caught_up  = true;
         // Stagger connects 5 msec apart within thread:
         aeCreateTimeEvent(loop, i * 5, delayed_initial_connect, c, NULL);
@@ -330,6 +329,10 @@ static int reconnect_socket(thread *thread, connection *c) {
     aeDeleteFileEvent(thread->loop, c->fd, AE_WRITABLE | AE_READABLE);
     sock.close(c);
     close(c->fd);
+    c->written = 0;
+    c->batch_scheduled = false;
+    c->pending = 0;
+    c->has_pending = false;
     return connect_socket(thread, c);
 }
 
@@ -432,7 +435,7 @@ static int response_body(http_parser *parser, const char *at, size_t len) {
 static uint64_t usec_to_next_send(connection *c) {
     uint64_t now = time_us();
 
-    uint64_t next_start_time = c->thread_start + (c->complete / c->throughput);
+    uint64_t next_start_time = c->thread_start + (c->scheduled / c->throughput);
 
     bool send_now = true;
 
@@ -446,15 +449,15 @@ static uint64_t usec_to_next_send(connection *c) {
             // This is the first fall-behind since we were last caught up
             c->caught_up = false;
             c->catch_up_start_time = now;
-            c->complete_at_catch_up_start = c->complete;
+            c->scheduled_at_catch_up_start = c->scheduled;
         }
 
         // Figure out if it's time to send, per catch up throughput:
-        uint64_t complete_since_catch_up_start =
-                c->complete - c->complete_at_catch_up_start;
+        uint64_t scheduled_since_catch_up_start =
+                c->scheduled - c->scheduled_at_catch_up_start;
 
         next_start_time = c->catch_up_start_time +
-                (complete_since_catch_up_start / c->catch_up_throughput);
+                (scheduled_since_catch_up_start / c->catch_up_throughput);
 
         if (next_start_time > now) {
             // Not yet time to send, even at catch-up throughput:
@@ -504,18 +507,15 @@ static int response_complete(http_parser *parser) {
         goto done;
     }
 
-    // Count all responses (including pipelined ones:)
-    c->complete++;
-
-    // Note that expected start time is computed based on the completed
-    // response count seen at the beginning of the last request batch sent.
+    // Note that expected start time is computed based on the scheduled
+    // request count seen at the beginning of the last request batch sent.
     // A single request batch send may contain multiple requests, and
     // result in multiple responses. If we incorrectly calculated expected
-    // start time based on the completion count of these individual pipelined
+    // start time based on the scheduled position of individual pipelined
     // requests we can easily end up "gifting" them time and seeing
     // negative latencies.
     uint64_t expected_latency_start = c->thread_start +
-            (c->complete_at_last_batch_start / c->throughput);
+            (c->scheduled_at_last_batch_start / c->throughput);
 
     int64_t expected_latency_timing = now - expected_latency_start;
 
@@ -529,7 +529,7 @@ static int response_complete(http_parser *parser) {
         printf("  now = %"PRIu64"\n", now);
         printf("  expected_latency_start = %"PRIu64"\n", expected_latency_start);
         printf("  c->thread_start = %"PRIu64"\n", c->thread_start);
-        printf("  c->complete = %"PRIu64"\n", c->complete);
+        printf("  c->scheduled = %"PRIu64"\n", c->scheduled);
         printf("  throughput = %g\n", c->throughput);
         printf("  latest_should_send_time = %"PRIu64"\n", c->latest_should_send_time);
         printf("  latest_expected_start = %"PRIu64"\n", c->latest_expected_start);
@@ -537,7 +537,7 @@ static int response_complete(http_parser *parser) {
         printf("  latest_write = %"PRIu64"\n", c->latest_write);
 
         expected_latency_start = c->thread_start +
-                ((c->complete ) / c->throughput);
+                (c->scheduled / c->throughput);
         printf("  next expected_latency_start = %"PRIu64"\n", expected_latency_start);
     }
 
@@ -598,7 +598,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
     thread *thread = c->thread;
 
-    if (!c->written) {
+    if (!c->batch_scheduled) {
         uint64_t time_usec_to_wait = usec_to_next_send(c);
         if (time_usec_to_wait) {
             int msec_to_wait = round((time_usec_to_wait / 1000.0L) + 0.5);
@@ -612,7 +612,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
         c->latest_write = time_us();
     }
 
-    if (!c->written && cfg.dynamic) {
+    if (!c->batch_scheduled && cfg.dynamic) {
         script_request(thread->L, &c->request, &c->length);
     }
 
@@ -620,13 +620,15 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     size_t len = c->length  - c->written;
     size_t n;
 
-    if (!c->written) {
+    if (!c->batch_scheduled) {
         c->start = time_us();
         if (!c->has_pending) {
             c->actual_latency_start = c->start;
-            c->complete_at_last_batch_start = c->complete;
             c->has_pending = true;
         }
+        c->scheduled_at_last_batch_start = c->scheduled;
+        c->scheduled += cfg.pipeline;
+        c->batch_scheduled = true;
         c->pending = cfg.pipeline;
     }
 
@@ -640,6 +642,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     c->written += n;
     if (c->written == c->length) {
         c->written = 0;
+        c->batch_scheduled = false;
         aeDeleteFileEvent(loop, fd, AE_WRITABLE);
     }
 

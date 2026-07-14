@@ -62,10 +62,10 @@ typedef struct connection {
     SSL *ssl;
     double throughput;
     double catch_up_throughput;
-    uint64_t complete;
-    uint64_t complete_at_last_batch_start;
+    uint64_t scheduled;
+    uint64_t scheduled_at_last_batch_start;
     uint64_t catch_up_start_time;
-    uint64_t complete_at_catch_up_start;
+    uint64_t scheduled_at_catch_up_start;
     uint64_t thread_start;
     uint64_t start;
     char *request;
@@ -76,6 +76,7 @@ typedef struct connection {
     buffer body;
     char buf[RECVBUF];
     uint64_t actual_latency_start;
+    bool batch_scheduled;
     bool has_pending;
     bool caught_up;
     bool peer_closed;
