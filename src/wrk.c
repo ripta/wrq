@@ -559,7 +559,7 @@ static int response_complete(http_parser *parser) {
 
 
     if (!http_should_keep_alive(parser)) {
-        reconnect_socket(thread, c);
+        if (!c->peer_closed) reconnect_socket(thread, c);
         goto done;
     }
 
@@ -576,6 +576,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
+        case CLOSED: goto error;
     }
 
     http_parser_init(&c->parser, HTTP_RESPONSE);
@@ -633,6 +634,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
+        case CLOSED: goto error;
     }
 
     c->written += n;
@@ -658,15 +660,26 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
             case OK:    break;
             case ERROR: goto error;
             case RETRY: return;
+            case CLOSED:
+                c->peer_closed = true;
+                break;
         }
 
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n) goto error;
         c->thread->bytes += n;
+
+        if (c->peer_closed) {
+            c->peer_closed = false;
+            if (c->has_pending) c->thread->errors.read++;
+            reconnect_socket(c->thread, c);
+            return;
+        }
     } while (n == RECVBUF && sock.readable(c) > 0);
 
     return;
 
   error:
+    c->peer_closed = false;
     c->thread->errors.read++;
     reconnect_socket(c->thread, c);
 }

@@ -75,6 +75,9 @@ status ssl_read(connection *c, size_t *n) {
         switch (SSL_get_error(c->ssl, r)) {
             case SSL_ERROR_WANT_READ:  return RETRY;
             case SSL_ERROR_WANT_WRITE: return RETRY;
+            case SSL_ERROR_ZERO_RETURN:
+                *n = 0;
+                return CLOSED;
             default:                   return ERROR;
         }
     }

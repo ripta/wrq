@@ -78,6 +78,7 @@ typedef struct connection {
     uint64_t actual_latency_start;
     bool has_pending;
     bool caught_up;
+    bool peer_closed;
     // Internal tracking numbers (used purely for debugging):
     uint64_t latest_should_send_time;
     uint64_t latest_expected_start;
