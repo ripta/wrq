@@ -3,7 +3,7 @@
 
 #include "net.h"
 
-SSL_CTX *ssl_init();
+SSL_CTX *ssl_init(const char *, const char *, const char *, const char *, bool);
 
 status ssl_connect(connection *, char *);
 status ssl_close(connection *);
