@@ -59,6 +59,8 @@ static void usage() {
     printf("Usage: wrk <options> <url>                            \n"
            "  Options:                                            \n"
            "    -c, --connections <N>  Connections to keep open   \n"
+           "        --connect-delay <N> Delay (ms) between opening\n"
+           "                           connections per thread     \n"
            "    -d, --duration    <T>  Duration of test           \n"
            "    -t, --threads     <N>  Number of threads to use   \n"
            "    -a, --affinity    <L>  CPUs for threads (e.g. 0,2-4)\n"
@@ -313,12 +315,14 @@ void *thread_main(void *arg) {
         c->request_timer = AE_NOMORE;
         c->reconnect_timer = AE_NOMORE;
         c->fd = -1;
-        // Stagger connects 5 msec apart within thread:
-        aeCreateTimeEvent(loop, i * 5, delayed_initial_connect, c, NULL);
+        // Stagger initial connects within each worker thread.
+        aeCreateTimeEvent(loop, i * cfg.delay_ms,
+                delayed_initial_connect, c, NULL);
     }
 
-    uint64_t calibrate_delay = CALIBRATE_DELAY_MS + (thread->connections * 5);
-    uint64_t timeout_delay = TIMEOUT_INTERVAL_MS + (thread->connections * 5);
+    uint64_t ramp_delay = thread->connections * cfg.delay_ms;
+    uint64_t calibrate_delay = CALIBRATE_DELAY_MS + ramp_delay;
+    uint64_t timeout_delay = TIMEOUT_INTERVAL_MS + ramp_delay;
 
     aeCreateTimeEvent(loop, calibrate_delay, calibrate, thread, NULL);
     aeCreateTimeEvent(loop, timeout_delay, check_timeouts, thread, NULL);
@@ -839,11 +843,13 @@ enum {
     OPT_CACERT = 256,
     OPT_CAPATH,
     OPT_CLIENT_CERT,
-    OPT_CLIENT_KEY
+    OPT_CLIENT_KEY,
+    OPT_CONNECT_DELAY
 };
 
 static struct option longopts[] = {
     { "connections",    required_argument, NULL, 'c' },
+    { "connect-delay",  required_argument, NULL, OPT_CONNECT_DELAY },
     { "duration",       required_argument, NULL, 'd' },
     { "threads",        required_argument, NULL, 't' },
     { "affinity",       required_argument, NULL, 'a' },
@@ -873,6 +879,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
     config->duration    = 10;
     config->timeout     = SOCKET_TIMEOUT_MS;
     config->rate        = 0;
+    config->delay_ms    = 5;
     config->record_all_responses = true;
 
     while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
@@ -893,6 +900,9 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
                 break;
             case 'c':
                 if (scan_metric(optarg, &config->connections)) return -1;
+                break;
+            case OPT_CONNECT_DELAY:
+                if (scan_metric(optarg, &config->delay_ms)) return -1;
                 break;
             case 'd':
                 if (scan_time(optarg, &config->duration)) return -1;
