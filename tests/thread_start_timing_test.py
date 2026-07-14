@@ -27,7 +27,7 @@ def duration_seconds(value, unit):
 
 def main():
     root = pathlib.Path(__file__).resolve().parent.parent
-    binary = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else root / "wrk")
+    binary = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else root / "wrq")
     if not binary.is_absolute():
         binary = root / binary
 

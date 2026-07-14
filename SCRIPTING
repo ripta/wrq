@@ -1,6 +1,6 @@
 Overview
 
-  wrk supports executing a LuaJIT script during three distinct phases: setup,
+  wrq supports executing a LuaJIT script during three distinct phases: setup,
   running, and done. Each wrk thread has an independent scripting environment
   and the setup & done phases execute in a separate environment which does
   not participate in the running phase.
@@ -71,7 +71,7 @@ Running
   a call to request() and response() for each request cycle.
 
   The init() function receives any extra command line arguments for the
-  script which must be separated from wrk arguments with "--".
+  script which must be separated from wrq arguments with "--".
 
   request() returns a string containing the HTTP request. Building a new
   request each time is expensive, when testing a high performance server

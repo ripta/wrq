@@ -1,4 +1,4 @@
-# cppcheck suppressions baseline for wrk2.
+# cppcheck suppressions baseline for wrq.
 # Run via: make cppcheck
 # Do not leave a bare `#` on a line. cppcheck 2.10 strips the comment marker,
 # finds an empty id, and aborts the whole run.

@@ -1,4 +1,4 @@
-# GCB (cloudbuild) config for wrk2 CI.
+# GCB (cloudbuild) config for wrq CI.
 #
 # Setup: create a trigger in GCB on branch pushes.
 #
@@ -34,7 +34,7 @@
 # compiler.
 #
 # macOS is not covered here. Cloud Build has no macOS workers, so a macOS build
-# would have to be a cross-compile. wrk2 links LuaJIT and OpenSSL, and both
+# would have to be a cross-compile. wrq links LuaJIT and OpenSSL, and both
 # would need cross-building for darwin/arm64. Build macOS locally for now.
 #
 # linux/arm64 is likewise not built here. It needs qemu binfmt registration and

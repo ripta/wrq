@@ -7,7 +7,7 @@ import sys
 
 def main():
     root = pathlib.Path(__file__).resolve().parent.parent
-    binary = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else root / "wrk")
+    binary = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else root / "wrq")
     if not binary.is_absolute():
         binary = root / binary
 
@@ -23,7 +23,7 @@ def main():
             sys.stderr.write("{} exited with status {}\n".format(option, result.returncode))
             sys.stderr.write(result.stderr)
             return 1
-        if not result.stdout.startswith("Usage: wrk "):
+        if not result.stdout.startswith("Usage: wrq "):
             sys.stderr.write("{} did not print usage to stdout\n".format(option))
             return 1
         if "-h, --help" not in result.stdout:
@@ -46,7 +46,7 @@ def main():
             sys.stderr.write("{} exited with status {}\n".format(option, result.returncode))
             sys.stderr.write(result.stderr)
             return 1
-        if not result.stdout.startswith("wrk 4.1.0 ["):
+        if not result.stdout.startswith("wrq 4.1.0 ["):
             sys.stderr.write("{} did not print the version banner\n".format(option))
             return 1
         if not result.stdout.endswith("] Copyright (C) 2012 Will Glozer\n"):

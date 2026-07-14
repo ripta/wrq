@@ -1,4 +1,5 @@
 // Copyright (C) 2012 - Will Glozer.  All rights reserved.
+// Modified from wrk and wrk2 by wrq contributors.
 
 #include "wrk.h"
 #include "script.h"
@@ -72,7 +73,7 @@ static void handler(int sig) {
 }
 
 static void usage() {
-    printf("Usage: wrk <options> <url>                            \n"
+    printf("Usage: wrq <options> <url>                            \n"
            "  Options:                                            \n"
            "    -c, --connections <N>  Connections to keep open   \n"
            "        --connect-delay <N> Delay (ms) between opening\n"
@@ -984,7 +985,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
                 config->client_key = optarg;
                 break;
             case 'v':
-                printf("wrk %s [%s] ", VERSION, aeGetApiName());
+                printf("wrq %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
                 return PARSE_VERSION;
             case 'h':

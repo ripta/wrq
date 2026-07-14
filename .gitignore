@@ -1,6 +1,7 @@
 *.o
 *.a
 wrk
+wrq
 /obj/affinity_test
 
 deps/luajit/src/host/buildvm

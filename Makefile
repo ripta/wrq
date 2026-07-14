@@ -28,7 +28,8 @@ endif
 
 SRC  := wrk.c affinity.c net.c ssl.c aprintf.c stats.c script.c units.c \
 		ae.c zmalloc.c http_parser.c tinymt64.c hdr_histogram.c
-BIN  := wrk
+BIN  := wrq
+LEGACY_BIN := wrk
 
 # Build with sanitizers. Run `make clean` when toggling SANITIZE.
 #   make SANITIZE=1           # address,undefined
@@ -71,7 +72,7 @@ LDFLAGS += -L$(LDIR)
 all: $(BIN)
 
 clean:
-	$(RM) $(BIN) obj/*
+	$(RM) $(BIN) $(LEGACY_BIN) obj/*
 	@$(MAKE) -C deps/luajit clean
 
 $(BIN): $(OBJ)
