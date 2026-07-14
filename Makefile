@@ -29,6 +29,27 @@ SRC  := wrk.c net.c ssl.c aprintf.c stats.c script.c units.c \
 		ae.c zmalloc.c http_parser.c tinymt64.c hdr_histogram.c
 BIN  := wrk
 
+# Build with sanitizers. Run `make clean` when toggling SANITIZE.
+#   make SANITIZE=1           # address,undefined
+#   make SANITIZE=undefined   # UBSan only (use where ASan can't init)
+# LuaJIT's own allocator deadlocks under ASan, so force it to use system
+# malloc whenever address sanitizing is requested.
+# NOTE: ASan cannot initialize on recent macOS (the instrumented malloc
+# zone hangs its shadow-memory setup). Use SANITIZE=undefined there.
+LUAJIT_BUILD_OPTS :=
+ifdef SANITIZE
+	ifeq ($(SANITIZE),1)
+		SAN_LIST := address,undefined
+	else
+		SAN_LIST := $(SANITIZE)
+	endif
+	CFLAGS  += -fsanitize=$(SAN_LIST) -fno-omit-frame-pointer -fno-sanitize-recover=all -g -O1
+	LDFLAGS += -fsanitize=$(SAN_LIST)
+	ifneq (,$(findstring address,$(SAN_LIST)))
+		LUAJIT_BUILD_OPTS += XCFLAGS=-DLUAJIT_USE_SYSMALLOC
+	endif
+endif
+
 # Static analysis. Override CPPCHECK to point at a specific binary.
 CPPCHECK       ?= cppcheck
 CPPCHECK_FLAGS := --enable=warning,performance,portability,style \
@@ -68,7 +89,7 @@ $(ODIR)/%.o : %.c
 
 $(LDIR)/libluajit.a:
 	@echo Building LuaJIT...
-	@$(MAKE) -C $(LDIR) BUILDMODE=static
+	@$(MAKE) -C $(LDIR) BUILDMODE=static $(LUAJIT_BUILD_OPTS)
 
 cppcheck: ## Run static analysis over src (clean == no output)
 	@$(CPPCHECK) $(CPPCHECK_FLAGS) src
