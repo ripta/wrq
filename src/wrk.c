@@ -10,6 +10,8 @@
 // Max recordable latency of 1 day
 #define MAX_LATENCY 24L * 60 * 60 * 1000000
 
+enum { PARSE_VERSION = 2 };
+
 static struct config {
     uint64_t     threads;
     uint64_t     connections;
@@ -108,7 +110,7 @@ int main(int argc, char **argv) {
 
     int parse_status = parse_args(&cfg, &url, &parts, headers, argc, argv);
     if (parse_status) {
-        usage();
+        if (parse_status != PARSE_VERSION) usage();
         exit(parse_status < 0 ? 1 : 0);
     }
 
@@ -984,7 +986,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
-                break;
+                return PARSE_VERSION;
             case 'h':
                 return 1;
             case '?':
