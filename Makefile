@@ -2,6 +2,7 @@ CFLAGS  := -std=c99 -Wall -O2 -D_REENTRANT
 LIBS    := -lpthread -lm -lcrypto -lssl
 
 TARGET  := $(shell uname -s | tr '[A-Z]' '[a-z]' 2>/dev/null || echo unknown)
+ARCH    := $(shell uname -m 2>/dev/null || echo unknown)
 
 ifeq ($(TARGET), sunos)
 	CFLAGS += -D_PTHREADS -D_POSIX_C_SOURCE=200112L
@@ -10,7 +11,7 @@ else ifeq ($(TARGET), darwin)
 	# Per https://luajit.org/install.html: If MACOSX_DEPLOYMENT_TARGET
 	# is not set then it's forced to 10.4, which breaks compile on Mojave.
 	export MACOSX_DEPLOYMENT_TARGET = $(shell sw_vers -productVersion)
-	ifeq ($(shell uname -m), x86_64)
+	ifeq ($(ARCH), x86_64)
 		LDFLAGS += -pagezero_size 10000 -image_base 100000000
 	endif
 	OPENSSL := $(shell brew --prefix openssl@3 2>/dev/null || echo /usr/local/opt/openssl)
@@ -32,8 +33,6 @@ BIN  := wrk
 # Build with sanitizers. Run `make clean` when toggling SANITIZE.
 #   make SANITIZE=1           # address,undefined
 #   make SANITIZE=undefined   # UBSan only (use where ASan can't init)
-# LuaJIT's own allocator deadlocks under ASan, so force it to use system
-# malloc whenever address sanitizing is requested.
 # NOTE: ASan cannot initialize on recent macOS (the instrumented malloc
 # zone hangs its shadow-memory setup). Use SANITIZE=undefined there.
 LUAJIT_BUILD_OPTS :=
@@ -45,8 +44,13 @@ ifdef SANITIZE
 	endif
 	CFLAGS  += -fsanitize=$(SAN_LIST) -fno-omit-frame-pointer -fno-sanitize-recover=all -g -O1
 	LDFLAGS += -fsanitize=$(SAN_LIST)
+	# ASan and LuaJIT's allocator collide only on x86_64, where LuaJIT wants
+	# the low 2GB that ASan reserves for shadow memory. System malloc avoids
+	# it. Do NOT do this on ARM64: sysmalloc breaks LuaJIT's GC arena there.
 	ifneq (,$(findstring address,$(SAN_LIST)))
-		LUAJIT_BUILD_OPTS += XCFLAGS=-DLUAJIT_USE_SYSMALLOC
+		ifeq ($(ARCH),x86_64)
+			LUAJIT_BUILD_OPTS += XCFLAGS=-DLUAJIT_USE_SYSMALLOC
+		endif
 	endif
 endif
 
