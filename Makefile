@@ -18,7 +18,7 @@ else ifeq ($(TARGET), darwin)
 	LIBS += -L$(OPENSSL)/lib
 	CFLAGS += -I/usr/local/include -I$(OPENSSL)/include
 else ifeq ($(TARGET), linux)
-        CFLAGS  += -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE
+        CFLAGS  += -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
 	LIBS    += -ldl
 	LDFLAGS += -Wl,-E
 else ifeq ($(TARGET), freebsd)
@@ -26,7 +26,7 @@ else ifeq ($(TARGET), freebsd)
 	LDFLAGS += -Wl,-E
 endif
 
-SRC  := wrk.c net.c ssl.c aprintf.c stats.c script.c units.c \
+SRC  := wrk.c affinity.c net.c ssl.c aprintf.c stats.c script.c units.c \
 		ae.c zmalloc.c http_parser.c tinymt64.c hdr_histogram.c
 BIN  := wrk
 
@@ -124,11 +124,16 @@ ci-matrix: ## Build and test under each compiler in CI_COMPILERS
 		$(MAKE) CC=$$cc all test; \
 	done
 
-# No tests yet. Each suite appends itself here as it lands, so ci-matrix and
-# cloudbuild.yaml never need to change to pick one up.
-test: ## Run all tests
+# Each suite appends itself here as it lands, so ci-matrix and cloudbuild.yaml
+# never need to change to pick one up.
+test: test-affinity ## Run all tests
 
-.PHONY: all ci ci-matrix clean cppcheck test
+test-affinity: | $(ODIR) ## Test CPU affinity list parsing
+	@$(CC) $(CFLAGS) -Isrc -o $(ODIR)/affinity_test \
+		tests/affinity_test.c src/affinity.c -lpthread
+	@$(ODIR)/affinity_test
+
+.PHONY: all ci ci-matrix clean cppcheck test test-affinity
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 

@@ -5,25 +5,27 @@
 #include "main.h"
 #include "hdr_histogram.h"
 #include "stats.h"
+#include "affinity.h"
 
 // Max recordable latency of 1 day
 #define MAX_LATENCY 24L * 60 * 60 * 1000000
 
 static struct config {
-    uint64_t threads;
-    uint64_t connections;
-    uint64_t duration;
-    uint64_t timeout;
-    uint64_t pipeline;
-    uint64_t rate;
-    uint64_t delay_ms;
-    bool     latency;
-    bool     u_latency;
-    bool     dynamic;
-    bool     record_all_responses;
-    char    *host;
-    char    *script;
-    SSL_CTX *ctx;
+    uint64_t     threads;
+    uint64_t     connections;
+    uint64_t     duration;
+    uint64_t     timeout;
+    uint64_t     pipeline;
+    uint64_t     rate;
+    uint64_t     delay_ms;
+    bool         latency;
+    bool         u_latency;
+    bool         dynamic;
+    bool         record_all_responses;
+    cpu_affinity affinity;
+    char         *host;
+    char         *script;
+    SSL_CTX      *ctx;
 } cfg;
 
 static struct {
@@ -55,6 +57,7 @@ static void usage() {
            "    -c, --connections <N>  Connections to keep open   \n"
            "    -d, --duration    <T>  Duration of test           \n"
            "    -t, --threads     <N>  Number of threads to use   \n"
+           "    -a, --affinity    <L>  CPUs for threads (e.g. 0,2-4)\n"
            "                                                      \n"
            "    -s, --script      <S>  Load Lua script file       \n"
            "    -H, --header      <H>  Add header to request      \n"
@@ -126,6 +129,8 @@ int main(int argc, char **argv) {
 
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t = &threads[i];
+        pthread_attr_t attr;
+        pthread_attr_t *attrp = NULL;
         t->loop        = aeCreateEventLoop(10 + cfg.connections * 3);
         t->connections = connections;
         t->throughput = throughput;
@@ -144,11 +149,29 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (!t->loop || pthread_create(&t->thread, NULL, &thread_main, t)) {
-            char *msg = strerror(errno);
+        int err = 0;
+        if (cfg.affinity.count) {
+            unsigned int cpu = cfg.affinity.cpus[i % cfg.affinity.count];
+            if ((err = pthread_attr_init(&attr))) {
+                fprintf(stderr, "unable to set affinity for thread %"PRIu64
+                        " to CPU %u: %s\n", i, cpu, strerror(err));
+                exit(2);
+            }
+            attrp = &attr;
+            if ((err = affinity_set_attr(attrp, cpu))) {
+                pthread_attr_destroy(attrp);
+                fprintf(stderr, "unable to set affinity for thread %"PRIu64
+                        " to CPU %u: %s\n", i, cpu, strerror(err));
+                exit(2);
+            }
+        }
+
+        if (!t->loop || (err = pthread_create(&t->thread, attrp, &thread_main, t))) {
+            char *msg = strerror(err ? err : errno);
             fprintf(stderr, "unable to create thread %"PRIu64": %s\n", i, msg);
             exit(2);
         }
+        if (attrp) pthread_attr_destroy(attrp);
     }
 
     struct sigaction sa = {
@@ -803,6 +826,7 @@ static struct option longopts[] = {
     { "connections",    required_argument, NULL, 'c' },
     { "duration",       required_argument, NULL, 'd' },
     { "threads",        required_argument, NULL, 't' },
+    { "affinity",       required_argument, NULL, 'a' },
     { "script",         required_argument, NULL, 's' },
     { "header",         required_argument, NULL, 'H' },
     { "latency",        no_argument,       NULL, 'L' },
@@ -827,8 +851,19 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
     config->rate        = 0;
     config->record_all_responses = true;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
         switch (c) {
+            case 'a':
+                if (!affinity_supported()) {
+                    fprintf(stderr, "CPU affinity is not supported on this platform\n");
+                    return -1;
+                }
+                affinity_free(&config->affinity);
+                if (affinity_parse(optarg, &config->affinity)) {
+                    fprintf(stderr, "invalid CPU affinity list: %s\n", optarg);
+                    return -1;
+                }
+                break;
             case 't':
                 if (scan_metric(optarg, &config->threads)) return -1;
                 break;
