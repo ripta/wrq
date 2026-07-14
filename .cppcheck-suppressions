@@ -1,0 +1,42 @@
+# cppcheck suppressions baseline for wrk2.
+# Run via: make cppcheck
+#
+# Goal: a clean run so genuinely new findings stand out during code work.
+# Only third-party code and project-convention style noise are muted here.
+
+# --- Third-party vendored sources. Upstream owns these, not this repo. ---
+# Redis event loop and allocator.
+*:src/ae.c
+*:src/ae_epoll.c
+*:src/ae_evport.c
+*:src/ae_kqueue.c
+*:src/ae_select.c
+*:src/zmalloc.c
+# HdrHistogram.
+*:src/hdr_histogram.c
+# Node.js HTTP parser.
+*:src/http_parser.c
+# TinyMT PRNG.
+*:src/tinymt64.c
+*:src/tinymt64.h
+
+# --- Project-convention style noise (not defects). ---
+# Functions are declared with unnamed params in headers, named in definitions.
+funcArgNamesDifferentUnnamed
+funcArgNamesDifferent
+# const-correctness suggestions on pointers. Stylistic only.
+constParameterPointer
+constVariablePointer
+
+# --- Reviewed pre-existing findings in first-party code. ---
+# These are line-specific on purpose. If a line shifts, the finding reappears
+# rather than being silently hidden, so it gets re-reviewed.
+# False positive: `units` is passed to format_units() on the next line.
+unreadVariable:src/units.c:86
+unreadVariable:src/units.c:89
+# `&` binds tighter than `?:` in C, so this already parses correctly.
+clarifyCalculation:src/script.c:522
+# `i` is a loop index reused across the function. Intentional.
+variableScope:src/units.c:61
+# parse_args() intentionally uses a local `cfg` matching the global name.
+shadowVariable:src/wrk.c:710

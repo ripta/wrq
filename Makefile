@@ -29,6 +29,12 @@ SRC  := wrk.c net.c ssl.c aprintf.c stats.c script.c units.c \
 		ae.c zmalloc.c http_parser.c tinymt64.c hdr_histogram.c
 BIN  := wrk
 
+# Static analysis. Override CPPCHECK to point at a specific binary.
+CPPCHECK       ?= cppcheck
+CPPCHECK_FLAGS := --enable=warning,performance,portability,style \
+		--suppressions-list=.cppcheck-suppressions \
+		--std=c11 --language=c --error-exitcode=1 -q -I src
+
 ODIR := obj
 OBJ  := $(patsubst %.c,$(ODIR)/%.o,$(SRC)) $(ODIR)/bytecode.o
 
@@ -64,10 +70,16 @@ $(LDIR)/libluajit.a:
 	@echo Building LuaJIT...
 	@$(MAKE) -C $(LDIR) BUILDMODE=static
 
-.PHONY: all clean
+cppcheck: ## Run static analysis over src (clean == no output)
+	@$(CPPCHECK) $(CPPCHECK_FLAGS) src
+
+.PHONY: all clean cppcheck
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 
 vpath %.c   src
 vpath %.h   src
 vpath %.lua scripts
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
