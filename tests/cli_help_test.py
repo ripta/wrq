@@ -46,7 +46,7 @@ def main():
             sys.stderr.write("{} exited with status {}\n".format(option, result.returncode))
             sys.stderr.write(result.stderr)
             return 1
-        if not result.stdout.startswith("wrk 4.0.0 ["):
+        if not result.stdout.startswith("wrk 4.1.0 ["):
             sys.stderr.write("{} did not print the version banner\n".format(option))
             return 1
         if not result.stdout.endswith("] Copyright (C) 2012 Will Glozer\n"):
