@@ -126,7 +126,7 @@ ci-matrix: ## Build and test under each compiler in CI_COMPILERS
 
 # Each suite appends itself here as it lands, so ci-matrix and cloudbuild.yaml
 # never need to change to pick one up.
-test: test-affinity test-thread-start ## Run all tests
+test: test-affinity test-thread-start test-cli-help ## Run all tests
 
 test-affinity: | $(ODIR) ## Test CPU affinity list parsing
 	@$(CC) $(CFLAGS) -Isrc -o $(ODIR)/affinity_test \
@@ -136,7 +136,11 @@ test-affinity: | $(ODIR) ## Test CPU affinity list parsing
 test-thread-start: $(BIN) ## Test synchronized worker benchmark start
 	@python3 tests/thread_start_timing_test.py ./$(BIN)
 
-.PHONY: all ci ci-matrix clean cppcheck test test-affinity test-thread-start
+test-cli-help: $(BIN) ## Test CLI help flags
+	@python3 tests/cli_help_test.py ./$(BIN)
+
+.PHONY: all ci ci-matrix clean cppcheck test test-affinity test-thread-start \
+	test-cli-help
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 

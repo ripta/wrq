@@ -91,6 +91,7 @@ static void usage() {
            "    -B, --batch_latency    Measure latency of whole   \n"
            "                           batches of pipelined ops   \n"
            "                           (as opposed to each op)    \n"
+           "    -h, --help             Print this help            \n"
            "    -v, --version          Print version details      \n"
            "    -R, --rate        <T>  work rate (throughput)     \n"
            "                           in requests/sec (total)    \n"
@@ -105,9 +106,10 @@ int main(int argc, char **argv) {
     char *url, **headers = zmalloc(argc * sizeof(char *));
     struct http_parser_url parts = {};
 
-    if (parse_args(&cfg, &url, &parts, headers, argc, argv)) {
+    int parse_status = parse_args(&cfg, &url, &parts, headers, argc, argv);
+    if (parse_status) {
         usage();
-        exit(1);
+        exit(parse_status < 0 ? 1 : 0);
     }
 
     char *schema  = copy_url_part(url, &parts, UF_SCHEMA);
@@ -919,7 +921,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
     config->delay_ms    = 5;
     config->record_all_responses = true;
 
-    while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBhrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 'a':
                 if (!affinity_supported()) {
@@ -984,6 +986,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
                 printf("Copyright (C) 2012 Will Glozer\n");
                 break;
             case 'h':
+                return 1;
             case '?':
             case ':':
             default:
