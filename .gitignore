@@ -2,6 +2,7 @@
 *.a
 wrk
 wrq
+/dist/
 /obj/affinity_test
 
 deps/luajit/src/host/buildvm
