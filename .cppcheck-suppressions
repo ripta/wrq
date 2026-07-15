@@ -39,7 +39,7 @@ constVariablePointer
 unreadVariable:src/units.c:86
 unreadVariable:src/units.c:89
 # `&` binds tighter than `?:` in C, so this already parses correctly.
-clarifyCalculation:src/script.c:522
+clarifyCalculation:src/script.c:523
 # `m->scale` is an int, so the product is computed as a double before it is
 # stored in a long double. The extra precision was never there to lose, and
 # this only feeds a `>=` threshold. Reported by cppcheck 2.17, not by 2.21.

@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include <openssl/evp.h>
 #include <openssl/err.h>

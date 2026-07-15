@@ -23,6 +23,9 @@ else ifeq ($(TARGET), linux)
 	LDFLAGS += -Wl,-E
 else ifeq ($(TARGET), freebsd)
 	CFLAGS  += -D_DECLARE_C99_LDBL_MATH
+	# pkg installs OpenSSL under /usr/local, off the default search path.
+	CFLAGS  += -I/usr/local/include
+	LIBS    += -L/usr/local/lib
 	LDFLAGS += -Wl,-E
 endif
 
@@ -118,7 +121,7 @@ $(ODIR)/%.o : %.c
 
 $(LDIR)/libluajit.a:
 	@echo Building LuaJIT...
-	@$(MAKE) -C $(LDIR) BUILDMODE=static $(LUAJIT_BUILD_OPTS)
+	@$(MAKE) -C $(LDIR) CC=$(CC) BUILDMODE=static $(LUAJIT_BUILD_OPTS)
 
 cppcheck: ## Run static analysis over src (clean == no output)
 	@$(CPPCHECK) $(CPPCHECK_FLAGS) src
