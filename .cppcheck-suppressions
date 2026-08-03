@@ -1,8 +1,12 @@
 # cppcheck suppressions baseline for wrk2.
 # Run via: make cppcheck
-#
+# Do not leave a bare `#` on a line. cppcheck 2.10 strips the comment marker,
+# finds an empty id, and aborts the whole run.
+
 # Goal: a clean run so genuinely new findings stand out during code work.
 # Only third-party code and project-convention style noise are muted here.
+# CI runs an older cppcheck than a current Homebrew install, so entries that
+# exist only to satisfy one version say so.
 
 # --- Third-party vendored sources. Upstream owns these, not this repo. ---
 # Redis event loop and allocator.
@@ -36,5 +40,13 @@ unreadVariable:src/units.c:86
 unreadVariable:src/units.c:89
 # `&` binds tighter than `?:` in C, so this already parses correctly.
 clarifyCalculation:src/script.c:522
+# `m->scale` is an int, so the product is computed as a double before it is
+# stored in a long double. The extra precision was never there to lose, and
+# this only feeds a `>=` threshold. Reported by cppcheck 2.17, not by 2.21.
+truncLongCastAssignment:src/units.c:46
+# Emitted when a function has more branches than the default check level walks.
+# It is an `information` message about analysis depth, not a finding, and the
+# --enable list above does not ask for it. cppcheck 2.17 prints it anyway.
+normalCheckLevelMaxBranches
 # `i` is a loop index reused across the function. Intentional.
 variableScope:src/units.c:61
