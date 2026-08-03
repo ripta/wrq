@@ -1,0 +1,76 @@
+# GCB (cloudbuild) config for wrk2 CI.
+#
+# Setup: create a trigger in GCB on branch pushes.
+#
+# What it does:
+#
+#   - Analyze: runs cppcheck.
+#   - CI: builds and runs the test suite under both gcc and clang. That is the
+#     Linux half of the old Travis matrix, plus tests Travis never ran.
+#
+# Both steps go through Makefile targets rather than spelling out commands, so
+# adding a test suite or a compiler flag does not mean touching this file.
+#
+# Two different base images, on purpose:
+#
+#   - The build runs on bookworm. Binaries link glibc dynamically, and building
+#     against an older glibc keeps them runnable on more distributions.
+#
+#   - cppcheck runs on trixie, which packages a much newer version. bookworm
+#     ships 2.10, which is old enough to reject this repo's suppressions file
+#     outright. cppcheck only reads source, so the image it runs under has no
+#     bearing on the shipped binary, and pinning the two independently is what
+#     lets the build image stay old while the analyzer stays current.
+#
+#   - The analyzer is still not an exact match for a current Homebrew cppcheck,
+#     so .cppcheck-suppressions carries a couple of entries that exist only to
+#     satisfy one version. They are labelled there. If that drift gets annoying,
+#     the fix is to pin an exact cppcheck in a prebuilt builder image.
+#
+# There is no dependency cache. LuaJIT is vendored under deps/ and nothing else
+# is fetched at build time, so a cold build only pays for apt and a
+# from-scratch compile. If that ever gets slow, the thing to cache is
+# deps/luajit/src/libluajit.a, keyed on a hash of the vendored tree and the
+# compiler.
+#
+# macOS is not covered here. Cloud Build has no macOS workers, so a macOS build
+# would have to be a cross-compile. wrk2 links LuaJIT and OpenSSL, and both
+# would need cross-building for darwin/arm64. Build macOS locally for now.
+#
+# linux/arm64 is likewise not built here. It needs qemu binfmt registration and
+# emulated LuaJIT builds.
+#
+# FreeBSD was not covered by Travis either. It stays a manual check.
+
+steps:
+  - id: Analyze
+    name: 'debian:trixie'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq cppcheck make
+        cppcheck --version
+        make cppcheck
+
+  - id: CI
+    name: 'debian:bookworm'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        echo "Build type: COMMIT $SHORT_SHA"
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        # git is only here to quiet LuaJIT's rolling-release version lookup.
+        apt-get install -y -qq build-essential clang git libssl-dev python3 zlib1g-dev
+        make ci-matrix
+
+timeout: 1800s
+
+options:
+  dynamicSubstitutions: true

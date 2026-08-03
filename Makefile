@@ -98,7 +98,37 @@ $(LDIR)/libluajit.a:
 cppcheck: ## Run static analysis over src (clean == no output)
 	@$(CPPCHECK) $(CPPCHECK_FLAGS) src
 
-.PHONY: all clean cppcheck
+# The CI gate. `make ci` is the whole thing and is what to run locally.
+#
+# Cloud Build calls the two halves separately, on different base images, so
+# that the analyzer version is not tied to the build toolchain. See
+# cloudbuild.yaml. Keep them runnable independently.
+#
+# ci-matrix builds and tests once per compiler, which is the coverage the old
+# Travis matrix gave us. Each pass starts from clean so LuaJIT is rebuilt with
+# the matching compiler. That means it deletes existing build output. On macOS
+# gcc is an alias for clang, so override the list there:
+#   make ci CI_COMPILERS=clang
+CI_COMPILERS ?= gcc clang
+
+ci: ## Run the full gate: static analysis, then build and test per compiler
+	@$(MAKE) cppcheck
+	@$(MAKE) ci-matrix
+
+# `set -e` matters here. Without it the loop exits with the status of its last
+# iteration, so a failure under gcc would be masked by a pass under clang.
+ci-matrix: ## Build and test under each compiler in CI_COMPILERS
+	@set -e; for cc in $(CI_COMPILERS); do \
+		echo "==> CI with $$cc"; \
+		$(MAKE) clean; \
+		$(MAKE) CC=$$cc all test; \
+	done
+
+# No tests yet. Each suite appends itself here as it lands, so ci-matrix and
+# cloudbuild.yaml never need to change to pick one up.
+test: ## Run all tests
+
+.PHONY: all ci ci-matrix clean cppcheck test
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 
