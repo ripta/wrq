@@ -25,6 +25,10 @@ static struct config {
     cpu_affinity affinity;
     char         *host;
     char         *script;
+    char         *cacert;
+    char         *capath;
+    char         *client_cert;
+    char         *client_key;
     SSL_CTX      *ctx;
 } cfg;
 
@@ -61,6 +65,10 @@ static void usage() {
            "                                                      \n"
            "    -s, --script      <S>  Load Lua script file       \n"
            "    -H, --header      <H>  Add header to request      \n"
+           "        --cacert      <F>  CA certificate bundle      \n"
+           "        --capath      <D>  CA certificate directory   \n"
+           "        --client-cert <F>  Client certificate chain   \n"
+           "        --client-key  <F>  Client private key         \n"
            "    -L  --latency          Print latency statistics   \n"
            "    -U  --u_latency        Print uncorrected latency statistics\n"
            "        --timeout     <T>  Socket/request timeout     \n"
@@ -92,7 +100,9 @@ int main(int argc, char **argv) {
     char *service = port ? port : schema;
 
     if (!strncmp("https", schema, 5)) {
-        if ((cfg.ctx = ssl_init()) == NULL) {
+        bool verify = cfg.client_cert || cfg.cacert || cfg.capath;
+        if ((cfg.ctx = ssl_init(cfg.cacert, cfg.capath, cfg.client_cert,
+                        cfg.client_key, verify)) == NULL) {
             fprintf(stderr, "unable to initialize SSL\n");
             ERR_print_errors_fp(stderr);
             exit(1);
@@ -102,6 +112,9 @@ int main(int argc, char **argv) {
         sock.read     = ssl_read;
         sock.write    = ssl_write;
         sock.readable = ssl_readable;
+    } else if (cfg.cacert || cfg.capath || cfg.client_cert) {
+        fprintf(stderr, "TLS options require an HTTPS URL\n");
+        exit(1);
     }
 	
     cfg.host = host;
@@ -822,6 +835,13 @@ static char *copy_url_part(char *url, struct http_parser_url *parts, enum http_p
     return part;
 }
 
+enum {
+    OPT_CACERT = 256,
+    OPT_CAPATH,
+    OPT_CLIENT_CERT,
+    OPT_CLIENT_KEY
+};
+
 static struct option longopts[] = {
     { "connections",    required_argument, NULL, 'c' },
     { "duration",       required_argument, NULL, 'd' },
@@ -836,6 +856,10 @@ static struct option longopts[] = {
     { "help",           no_argument,       NULL, 'h' },
     { "version",        no_argument,       NULL, 'v' },
     { "rate",           required_argument, NULL, 'R' },
+    { "cacert",         required_argument, NULL, OPT_CACERT },
+    { "capath",         required_argument, NULL, OPT_CAPATH },
+    { "client-cert",    required_argument, NULL, OPT_CLIENT_CERT },
+    { "client-key",     required_argument, NULL, OPT_CLIENT_KEY },
     { NULL,             0,                 NULL,  0  }
 };
 
@@ -896,6 +920,18 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
             case 'R':
                 if (scan_metric(optarg, &config->rate)) return -1;
                 break;
+            case OPT_CACERT:
+                config->cacert = optarg;
+                break;
+            case OPT_CAPATH:
+                config->capath = optarg;
+                break;
+            case OPT_CLIENT_CERT:
+                config->client_cert = optarg;
+                break;
+            case OPT_CLIENT_KEY:
+                config->client_key = optarg;
+                break;
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
@@ -909,6 +945,11 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
     }
 
     if (optind == argc || !config->threads || !config->duration) return -1;
+
+    if (!!config->client_cert != !!config->client_key) {
+        fprintf(stderr, "--client-cert and --client-key must be used together\n");
+        return -1;
+    }
 
     if (!script_parse_url(argv[optind], parts)) {
         fprintf(stderr, "invalid URL: %s\n", argv[optind]);

@@ -77,6 +77,17 @@
   threads than CPUs, the list is reused from the beginning. When affinity is
   omitted, wrk2 does not change the threads' affinity.
 
+  Mutual TLS is supported with a PEM client certificate chain and private key:
+
+    wrk --cacert company-ca.pem --client-cert client.pem \
+        --client-key client.key -c10 -d30s -R100 https://service.example.com/
+
+  `--client-cert` and `--client-key` must be used together. Supplying them
+  enables server certificate and hostname verification using OpenSSL's default
+  trust paths. `--cacert <file>` and `--capath <directory>` add private trust
+  anchors; either option also enables verification when used without a client
+  certificate. HTTPS without any TLS options retains wrk2's existing behavior.
+
   [It's important to note that wrk2 extends the initial calibration
    period to 10 seconds (from wrk's 0.5 second), so runs shorter than
    10-20 seconds may not present useful information]
