@@ -211,7 +211,7 @@ void zmalloc_enable_thread_safeness(void) {
  *
  * For this kind of "fast RSS reporting" usages use instead the
  * function RedisEstimateRSS() that is a much faster (and less precise)
- * version of the funciton. */
+ * version of the function. */
 
 #if defined(HAVE_PROCFS)
 #include <unistd.h>

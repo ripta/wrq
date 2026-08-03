@@ -207,7 +207,6 @@ int main(int argc, char **argv) {
     print_stats_header();
     print_stats("Latency", latency_stats, format_time_us);
     print_stats("Req/Sec", statistics.requests, format_metric);
-//    if (cfg.latency) print_stats_latency(latency_stats);
 
     if (cfg.latency) {
         print_hdr_latency(latency_histogram,
@@ -227,12 +226,12 @@ int main(int argc, char **argv) {
     printf("  %"PRIu64" requests in %s, %sB read\n",
             complete, runtime_msg, format_binary(bytes));
     if (errors.connect || errors.read || errors.write || errors.timeout) {
-        printf("  Socket errors: connect %d, read %d, write %d, timeout %d\n",
+        printf("  Socket errors: connect %"PRIu32", read %"PRIu32", write %"PRIu32", timeout %"PRIu32"\n",
                errors.connect, errors.read, errors.write, errors.timeout);
     }
 
     if (errors.status) {
-        printf("  Non-2xx or 3xx responses: %d\n", errors.status);
+        printf("  Non-2xx or 3xx responses: %"PRIu32"\n", errors.status);
     }
 
     printf("Requests/sec: %9.2Lf\n", req_per_s);
@@ -458,7 +457,7 @@ static uint64_t usec_to_next_send(connection *c) {
                 (complete_since_catch_up_start / c->catch_up_throughput);
 
         if (next_start_time > now) {
-            // Not yet time to send, even at catch-up throughout:
+            // Not yet time to send, even at catch-up throughput:
             send_now = false;
         }
     }
@@ -511,7 +510,7 @@ static int response_complete(http_parser *parser) {
     // Note that expected start time is computed based on the completed
     // response count seen at the beginning of the last request batch sent.
     // A single request batch send may contain multiple requests, and
-    // result in multiple responses. If we incorrectly calculated expect
+    // result in multiple responses. If we incorrectly calculated expected
     // start time based on the completion count of these individual pipelined
     // requests we can easily end up "gifting" them time and seeing
     // negative latencies.
@@ -522,24 +521,24 @@ static int response_complete(http_parser *parser) {
 
     if (expected_latency_timing < 0) {
         printf("\n\n ---------- \n\n");
-        printf("We are about to crash and die (recoridng a negative #)");
-        printf("This wil never ever ever happen...");
+        printf("We are about to crash and die (recording a negative #)");
+        printf("This will never ever ever happen...");
         printf("But when it does. The following information will help in debugging");
         printf("response_complete:\n");
-        printf("  expected_latency_timing = %lld\n", expected_latency_timing);
-        printf("  now = %lld\n", now);
-        printf("  expected_latency_start = %lld\n", expected_latency_start);
-        printf("  c->thread_start = %lld\n", c->thread_start);
-        printf("  c->complete = %lld\n", c->complete);
+        printf("  expected_latency_timing = %"PRId64"\n", expected_latency_timing);
+        printf("  now = %"PRIu64"\n", now);
+        printf("  expected_latency_start = %"PRIu64"\n", expected_latency_start);
+        printf("  c->thread_start = %"PRIu64"\n", c->thread_start);
+        printf("  c->complete = %"PRIu64"\n", c->complete);
         printf("  throughput = %g\n", c->throughput);
-        printf("  latest_should_send_time = %lld\n", c->latest_should_send_time);
-        printf("  latest_expected_start = %lld\n", c->latest_expected_start);
-        printf("  latest_connect = %lld\n", c->latest_connect);
-        printf("  latest_write = %lld\n", c->latest_write);
+        printf("  latest_should_send_time = %"PRIu64"\n", c->latest_should_send_time);
+        printf("  latest_expected_start = %"PRIu64"\n", c->latest_expected_start);
+        printf("  latest_connect = %"PRIu64"\n", c->latest_connect);
+        printf("  latest_write = %"PRIu64"\n", c->latest_write);
 
         expected_latency_start = c->thread_start +
                 ((c->complete ) / c->throughput);
-        printf("  next expected_latency_start = %lld\n", expected_latency_start);
+        printf("  next expected_latency_start = %"PRIu64"\n", expected_latency_start);
     }
 
     c->latest_should_send_time = 0;
@@ -550,7 +549,7 @@ static int response_complete(http_parser *parser) {
         aeCreateFileEvent(thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
     }
 
-    // Record if needed, either last in batch or all, depending in cfg:
+    // Record if needed, either last in batch or all, depending on cfg:
     if (cfg.record_all_responses || !c->has_pending) {
         hdr_record_value(thread->latency_histogram, expected_latency_timing);
 
@@ -707,50 +706,51 @@ static struct option longopts[] = {
     { NULL,             0,                 NULL,  0  }
 };
 
-static int parse_args(struct config *cfg, char **url, struct http_parser_url *parts, char **headers, int argc, char **argv) {
-    char c, **header = headers;
+static int parse_args(struct config *config, char **url, struct http_parser_url *parts, char **headers, int argc, char **argv) {
+    int c;
+    char **header = headers;
 
-    memset(cfg, 0, sizeof(struct config));
-    cfg->threads     = 2;
-    cfg->connections = 10;
-    cfg->duration    = 10;
-    cfg->timeout     = SOCKET_TIMEOUT_MS;
-    cfg->rate        = 0;
-    cfg->record_all_responses = true;
+    memset(config, 0, sizeof(struct config));
+    config->threads     = 2;
+    config->connections = 10;
+    config->duration    = 10;
+    config->timeout     = SOCKET_TIMEOUT_MS;
+    config->rate        = 0;
+    config->record_all_responses = true;
 
     while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
-                if (scan_metric(optarg, &cfg->threads)) return -1;
+                if (scan_metric(optarg, &config->threads)) return -1;
                 break;
             case 'c':
-                if (scan_metric(optarg, &cfg->connections)) return -1;
+                if (scan_metric(optarg, &config->connections)) return -1;
                 break;
             case 'd':
-                if (scan_time(optarg, &cfg->duration)) return -1;
+                if (scan_time(optarg, &config->duration)) return -1;
                 break;
             case 's':
-                cfg->script = optarg;
+                config->script = optarg;
                 break;
             case 'H':
                 *header++ = optarg;
                 break;
             case 'L':
-                cfg->latency = true;
+                config->latency = true;
                 break;
             case 'B':
-                cfg->record_all_responses = false;
+                config->record_all_responses = false;
                 break;
             case 'U':
-                cfg->latency = true;
-                cfg->u_latency = true;
+                config->latency = true;
+                config->u_latency = true;
                 break;
             case 'T':
-                if (scan_time(optarg, &cfg->timeout)) return -1;
-                cfg->timeout *= 1000;
+                if (scan_time(optarg, &config->timeout)) return -1;
+                config->timeout *= 1000;
                 break;
             case 'R':
-                if (scan_metric(optarg, &cfg->rate)) return -1;
+                if (scan_metric(optarg, &config->rate)) return -1;
                 break;
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
@@ -764,19 +764,19 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
         }
     }
 
-    if (optind == argc || !cfg->threads || !cfg->duration) return -1;
+    if (optind == argc || !config->threads || !config->duration) return -1;
 
     if (!script_parse_url(argv[optind], parts)) {
         fprintf(stderr, "invalid URL: %s\n", argv[optind]);
         return -1;
     }
 
-    if (!cfg->connections || cfg->connections < cfg->threads) {
+    if (!config->connections || config->connections < config->threads) {
         fprintf(stderr, "number of connections must be >= threads\n");
         return -1;
     }
 
-    if (cfg->rate == 0) {
+    if (config->rate == 0) {
         fprintf(stderr,
                 "Throughput MUST be specified with the --rate or -R option\n");
         return -1;
@@ -796,8 +796,8 @@ static void print_units(long double n, char *(*fmt)(long double), int width) {
     char *msg = fmt(n);
     int len = strlen(msg), pad = 2;
 
-    if (isalpha(msg[len-1])) pad--;
-    if (isalpha(msg[len-2])) pad--;
+    if (isalpha((unsigned char)msg[len-1])) pad--;
+    if (isalpha((unsigned char)msg[len-2])) pad--;
     width -= pad;
 
     printf("%*.*s%.*s", width, width, msg, pad, "  ");
@@ -829,16 +829,4 @@ static void print_hdr_latency(struct hdr_histogram* histogram, const char* descr
     }
     printf("\n%s\n", "  Detailed Percentile spectrum:");
     hdr_percentiles_print(histogram, stdout, 5, 1000.0, CLASSIC);
-}
-
-static void print_stats_latency(stats *stats) {
-    long double percentiles[] = { 50.0, 75.0, 90.0, 99.0, 99.9, 99.99, 99.999, 100.0 };
-    printf("  Latency Distribution\n");
-    for (size_t i = 0; i < sizeof(percentiles) / sizeof(long double); i++) {
-        long double p = percentiles[i];
-        uint64_t n = stats_percentile(stats, p);
-        printf("%7.3Lf%%", p);
-        print_units(n, format_time_us, 10);
-        printf("\n");
-    }
 }
