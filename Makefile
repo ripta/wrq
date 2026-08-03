@@ -23,6 +23,9 @@ else ifeq ($(TARGET), linux)
 	LDFLAGS += -Wl,-E
 else ifeq ($(TARGET), freebsd)
 	CFLAGS  += -D_DECLARE_C99_LDBL_MATH
+	# pkg installs OpenSSL under /usr/local, off the default search path.
+	CFLAGS  += -I/usr/local/include
+	LIBS    += -L/usr/local/lib
 	LDFLAGS += -Wl,-E
 endif
 
@@ -64,6 +67,14 @@ CPPCHECK_FLAGS := --enable=warning,performance,portability,style \
 ODIR := obj
 OBJ  := $(patsubst %.c,$(ODIR)/%.o,$(SRC)) $(ODIR)/bytecode.o
 
+# Distribution builds. `make dist` produces one binary per target OS/arch in
+# dist/. The native binary is built here. The Linux binaries are built inside
+# target-arch containers (see scripts/build-in-container.sh).
+DIST_DIR  := dist
+# Normalize uname's arch to the amd64/arm64 names used for artifacts.
+DIST_ARCH := $(if $(filter x86_64,$(ARCH)),amd64,$(if $(filter arm64 aarch64,$(ARCH)),arm64,$(ARCH)))
+DIST_NATIVE := $(DIST_DIR)/wrq-$(TARGET)-$(DIST_ARCH)
+
 LDIR     = deps/luajit/src
 LIBS    := -lluajit $(LIBS)
 CFLAGS  += -I$(LDIR)
@@ -73,7 +84,23 @@ all: $(BIN)
 
 clean:
 	$(RM) $(BIN) $(LEGACY_BIN) obj/*
+	$(RM) -r $(DIST_DIR)
 	@$(MAKE) -C deps/luajit clean
+
+dist: dist-native dist-linux-amd64 dist-linux-arm64 ## Build binaries for all targets into dist/
+
+# Native build for the host OS/arch (e.g. darwin/arm64 on Apple Silicon).
+dist-native: ## Build the host-native binary into dist/
+	@$(MAKE) $(BIN)
+	@mkdir -p $(DIST_DIR)
+	@cp $(BIN) $(DIST_NATIVE)
+	@echo DIST $(DIST_NATIVE)
+
+dist-linux-amd64: ## Build the linux/amd64 binary into dist/
+	@$(SHELL) scripts/build-in-container.sh linux/amd64 wrq-linux-amd64
+
+dist-linux-arm64: ## Build the linux/arm64 binary into dist/
+	@$(SHELL) scripts/build-in-container.sh linux/arm64 wrq-linux-arm64
 
 $(BIN): $(OBJ)
 	@echo LINK $(BIN)
@@ -94,7 +121,7 @@ $(ODIR)/%.o : %.c
 
 $(LDIR)/libluajit.a:
 	@echo Building LuaJIT...
-	@$(MAKE) -C $(LDIR) BUILDMODE=static $(LUAJIT_BUILD_OPTS)
+	@$(MAKE) -C $(LDIR) CC=$(CC) BUILDMODE=static $(LUAJIT_BUILD_OPTS)
 
 cppcheck: ## Run static analysis over src (clean == no output)
 	@$(CPPCHECK) $(CPPCHECK_FLAGS) src
@@ -141,7 +168,7 @@ test-cli-help: $(BIN) ## Test CLI help flags
 	@python3 tests/cli_help_test.py ./$(BIN)
 
 .PHONY: all ci ci-matrix clean cppcheck test test-affinity test-thread-start \
-	test-cli-help
+	test-cli-help dist dist-native dist-linux-amd64 dist-linux-arm64
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 
