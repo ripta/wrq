@@ -37,6 +37,20 @@ static struct {
     pthread_mutex_t mutex;
 } statistics;
 
+static struct {
+    pthread_mutex_t mutex;
+    // Separate conditions prevent a readiness notification from waking a
+    // worker that is waiting for the benchmark to start.
+    pthread_cond_t ready_cond;
+    pthread_cond_t start_cond;
+    uint64_t ready;
+    bool released;
+} start_gate = {
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .ready_cond = PTHREAD_COND_INITIALIZER,
+    .start_cond = PTHREAD_COND_INITIALIZER,
+};
+
 static struct sock sock = {
     .connect  = sock_connect,
     .close    = sock_close,
@@ -59,6 +73,8 @@ static void usage() {
     printf("Usage: wrk <options> <url>                            \n"
            "  Options:                                            \n"
            "    -c, --connections <N>  Connections to keep open   \n"
+           "        --connect-delay <N> Delay (ms) between opening\n"
+           "                           connections per thread     \n"
            "    -d, --duration    <T>  Duration of test           \n"
            "    -t, --threads     <N>  Number of threads to use   \n"
            "    -a, --affinity    <L>  CPUs for threads (e.g. 0,2-4)\n"
@@ -138,8 +154,6 @@ int main(int argc, char **argv) {
     
     uint64_t connections = cfg.connections / cfg.threads;
     double throughput    = (double)cfg.rate / cfg.threads;
-    uint64_t stop_at     = time_us() + (cfg.duration * 1000000);
-
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t = &threads[i];
         pthread_attr_t attr;
@@ -147,8 +161,6 @@ int main(int argc, char **argv) {
         t->loop        = aeCreateEventLoop(10 + cfg.connections * 3);
         t->connections = connections;
         t->throughput = throughput;
-        t->stop_at     = stop_at;
-
         t->L = script_create(cfg.script, url, headers);
         script_init(L, t, argc - optind, &argv[optind]);
 
@@ -199,7 +211,20 @@ int main(int argc, char **argv) {
     printf("  %"PRIu64" threads and %"PRIu64" connections\n",
             cfg.threads, cfg.connections);
 
-    uint64_t start    = time_us();
+    pthread_mutex_lock(&start_gate.mutex);
+    while (start_gate.ready < cfg.threads) {
+        pthread_cond_wait(&start_gate.ready_cond, &start_gate.mutex);
+    }
+
+    uint64_t start = time_us();
+    uint64_t stop_at = start + (cfg.duration * 1000000);
+    for (uint64_t i = 0; i < cfg.threads; i++) {
+        threads[i].stop_at = stop_at;
+    }
+    start_gate.released = true;
+    pthread_cond_broadcast(&start_gate.start_cond);
+    pthread_mutex_unlock(&start_gate.mutex);
+
     uint64_t complete = 0;
     uint64_t bytes    = 0;
     errors errors     = { 0 };
@@ -313,12 +338,28 @@ void *thread_main(void *arg) {
         c->request_timer = AE_NOMORE;
         c->reconnect_timer = AE_NOMORE;
         c->fd = -1;
-        // Stagger connects 5 msec apart within thread:
-        aeCreateTimeEvent(loop, i * 5, delayed_initial_connect, c, NULL);
     }
 
-    uint64_t calibrate_delay = CALIBRATE_DELAY_MS + (thread->connections * 5);
-    uint64_t timeout_delay = TIMEOUT_INTERVAL_MS + (thread->connections * 5);
+    pthread_mutex_lock(&start_gate.mutex);
+    start_gate.ready++;
+    if (start_gate.ready == cfg.threads) {
+        pthread_cond_signal(&start_gate.ready_cond);
+    }
+    while (!start_gate.released) {
+        pthread_cond_wait(&start_gate.start_cond, &start_gate.mutex);
+    }
+    pthread_mutex_unlock(&start_gate.mutex);
+
+    c = thread->cs;
+    for (uint64_t i = 0; i < thread->connections; i++, c++) {
+        // Stagger initial connects within each worker thread.
+        aeCreateTimeEvent(loop, i * cfg.delay_ms,
+                delayed_initial_connect, c, NULL);
+    }
+
+    uint64_t ramp_delay = thread->connections * cfg.delay_ms;
+    uint64_t calibrate_delay = CALIBRATE_DELAY_MS + ramp_delay;
+    uint64_t timeout_delay = TIMEOUT_INTERVAL_MS + ramp_delay;
 
     aeCreateTimeEvent(loop, calibrate_delay, calibrate, thread, NULL);
     aeCreateTimeEvent(loop, timeout_delay, check_timeouts, thread, NULL);
@@ -817,9 +858,9 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
 }
 
 static uint64_t time_us() {
-    struct timeval t;
-    gettimeofday(&t, NULL);
-    return (t.tv_sec * 1000000) + t.tv_usec;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return ((uint64_t)t.tv_sec * 1000000) + (t.tv_nsec / 1000);
 }
 
 static char *copy_url_part(char *url, struct http_parser_url *parts, enum http_parser_url_fields field) {
@@ -839,11 +880,13 @@ enum {
     OPT_CACERT = 256,
     OPT_CAPATH,
     OPT_CLIENT_CERT,
-    OPT_CLIENT_KEY
+    OPT_CLIENT_KEY,
+    OPT_CONNECT_DELAY
 };
 
 static struct option longopts[] = {
     { "connections",    required_argument, NULL, 'c' },
+    { "connect-delay",  required_argument, NULL, OPT_CONNECT_DELAY },
     { "duration",       required_argument, NULL, 'd' },
     { "threads",        required_argument, NULL, 't' },
     { "affinity",       required_argument, NULL, 'a' },
@@ -873,6 +916,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
     config->duration    = 10;
     config->timeout     = SOCKET_TIMEOUT_MS;
     config->rate        = 0;
+    config->delay_ms    = 5;
     config->record_all_responses = true;
 
     while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
@@ -893,6 +937,9 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
                 break;
             case 'c':
                 if (scan_metric(optarg, &config->connections)) return -1;
+                break;
+            case OPT_CONNECT_DELAY:
+                if (scan_metric(optarg, &config->delay_ms)) return -1;
                 break;
             case 'd':
                 if (scan_time(optarg, &config->duration)) return -1;

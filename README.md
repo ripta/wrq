@@ -67,6 +67,14 @@
   100 HTTP connections open, and a constant throughput of 2000 requests
   per second (total, across all connections combined).
 
+  Initial connections are opened 5ms apart within each worker thread. Use
+  `--connect-delay` to change that interval and smooth out startup further:
+
+    wrk -t2 -c500 -d30s -R2000 --connect-delay 20 http://127.0.0.1:8080/
+
+  In this example, each thread opens one of its 250 connections every 20ms.
+  A value of `0` disables connection staggering.
+
   On Linux, worker threads can be pinned to selected CPUs with `-a` or
   `--affinity`. The value accepts comma-separated CPU numbers and ranges:
 

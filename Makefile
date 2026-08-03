@@ -6,7 +6,7 @@ ARCH    := $(shell uname -m 2>/dev/null || echo unknown)
 
 ifeq ($(TARGET), sunos)
 	CFLAGS += -D_PTHREADS -D_POSIX_C_SOURCE=200112L
-	LIBS   += -lsocket
+	LIBS   += -lsocket -lrt
 else ifeq ($(TARGET), darwin)
 	# Per https://luajit.org/install.html: If MACOSX_DEPLOYMENT_TARGET
 	# is not set then it's forced to 10.4, which breaks compile on Mojave.
@@ -126,14 +126,17 @@ ci-matrix: ## Build and test under each compiler in CI_COMPILERS
 
 # Each suite appends itself here as it lands, so ci-matrix and cloudbuild.yaml
 # never need to change to pick one up.
-test: test-affinity ## Run all tests
+test: test-affinity test-thread-start ## Run all tests
 
 test-affinity: | $(ODIR) ## Test CPU affinity list parsing
 	@$(CC) $(CFLAGS) -Isrc -o $(ODIR)/affinity_test \
 		tests/affinity_test.c src/affinity.c -lpthread
 	@$(ODIR)/affinity_test
 
-.PHONY: all ci ci-matrix clean cppcheck test test-affinity
+test-thread-start: $(BIN) ## Test synchronized worker benchmark start
+	@python3 tests/thread_start_timing_test.py ./$(BIN)
+
+.PHONY: all ci ci-matrix clean cppcheck test test-affinity test-thread-start
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 
