@@ -296,19 +296,56 @@ void *thread_main(void *arg) {
     return NULL;
 }
 
+// Warn once per resource-exhaustion errno so the cause of silent connect
+// failures is visible. Called from any worker thread, so guard the flags.
+static void warn_connect_error(int err) {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    static bool warned_files = false;
+    static bool warned_ports = false;
+
+    bool *flag;
+    const char *fmt;
+
+    switch (err) {
+        case EMFILE:
+        case ENFILE:
+            flag = &warned_files;
+            fmt  = "socket() failed: %s.\n"
+                   "  The open-file limit is too low for this many connections.\n"
+                   "  Raise it with `ulimit -n <N>` before running wrq.\n";
+            break;
+        case EADDRNOTAVAIL:
+            flag = &warned_ports;
+            fmt  = "connect() failed: %s.\n"
+                   "  Ran out of local ports. One client cannot open this many\n"
+                   "  connections to a single address. Use fewer connections,\n"
+                   "  more target addresses, or more load generators.\n";
+            break;
+        default:
+            return;
+    }
+
+    pthread_mutex_lock(&lock);
+    if (!*flag) {
+        *flag = true;
+        fprintf(stderr, fmt, strerror(err));
+    }
+    pthread_mutex_unlock(&lock);
+}
+
 static int connect_socket(thread *thread, connection *c) {
     struct addrinfo *addr = thread->addr;
     struct aeEventLoop *loop = thread->loop;
-    int fd, flags;
+    int fd, flags, err = 0;
 
     fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-    if (fd == -1) goto error;
+    if (fd == -1) { err = errno; goto error; }
 
     flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     if (connect(fd, addr->ai_addr, addr->ai_addrlen) == -1) {
-        if (errno != EINPROGRESS) goto error;
+        if (errno != EINPROGRESS) { err = errno; goto error; }
     }
 
     flags = 1;
@@ -325,6 +362,7 @@ static int connect_socket(thread *thread, connection *c) {
 
   error:
     thread->errors.connect++;
+    if (err) warn_connect_error(err);
     if (fd >= 0) close(fd);
     schedule_reconnect(thread, c);
     return -1;
