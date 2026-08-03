@@ -1,20 +1,27 @@
 # GCB (cloudbuild) config for wrq CI.
 #
-# Setup: create a trigger in GCB on branch pushes.
+# Setup: create one or more triggers in GCB. Both branch and tag pushes are
+# supported. Tag builds also cut a GitHub release; see below.
 #
 # What it does:
 #
 #   - Analyze: runs cppcheck.
 #   - CI: builds and runs the test suite under both gcc and clang. That is the
 #     Linux half of the old Travis matrix, plus tests Travis never ran.
+#   - Dist and Release: on tags only, build a linux/amd64 binary and publish it.
 #
-# Both steps go through Makefile targets rather than spelling out commands, so
-# adding a test suite or a compiler flag does not mean touching this file.
+# Each step guards on TAG_NAME before doing any work, so a branch build pays
+# only for CI and a tag build pays only for the release path.
+#
+# Every step goes through Makefile targets rather than spelling out commands,
+# so adding a test suite or a compiler flag does not mean touching this file.
 #
 # Two different base images, on purpose:
 #
-#   - The build runs on bookworm. Binaries link glibc dynamically, and building
-#     against an older glibc keeps them runnable on more distributions.
+#   - The build runs on bookworm. Release binaries link glibc dynamically, and
+#     building against an older glibc keeps them runnable on more distributions.
+#     CI builds on the same image as the release so that what CI compiles is
+#     what ships.
 #
 #   - cppcheck runs on trixie, which packages a much newer version. bookworm
 #     ships 2.10, which is old enough to reject this repo's suppressions file
@@ -33,12 +40,18 @@
 # deps/luajit/src/libluajit.a, keyed on a hash of the vendored tree and the
 # compiler.
 #
-# macOS is not covered here. Cloud Build has no macOS workers, so a macOS build
-# would have to be a cross-compile. wrq links LuaJIT and OpenSSL, and both
-# would need cross-building for darwin/arm64. Build macOS locally for now.
+# macOS is not covered here:
+#
+#   - Cloud Build has no macOS workers, so a macOS build would have to be a
+#     cross-compile. Unlike zaz, a vendored macOS SDK is not enough. wrq links
+#     LuaJIT and OpenSSL, and both would need cross-building for darwin/arm64.
+#     The SDK ships no OpenSSL headers or libraries at all.
+#
+#   - Until that is worth doing, build macOS binaries locally with
+#     `make dist-native`.
 #
 # linux/arm64 is likewise not built here. It needs qemu binfmt registration and
-# emulated LuaJIT builds.
+# emulated LuaJIT builds. `make dist-linux-arm64` covers it locally.
 #
 # FreeBSD was not covered by Travis either. It stays a manual check.
 
@@ -50,6 +63,10 @@ steps:
       - '-c'
       - |
         set -e
+        if [[ -n "$TAG_NAME" ]]; then
+          echo "Tag build; static analysis already ran on the tagged commit"
+          exit 0
+        fi
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         apt-get install -y -qq cppcheck make
@@ -63,6 +80,10 @@ steps:
       - '-c'
       - |
         set -e
+        if [[ -n "$TAG_NAME" ]]; then
+          echo "Tag build; the tagged commit already passed CI on master"
+          exit 0
+        fi
         echo "Build type: COMMIT $SHORT_SHA"
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
@@ -70,7 +91,72 @@ steps:
         apt-get install -y -qq build-essential clang git libssl-dev python3 zlib1g-dev
         make ci-matrix
 
+  - id: Dist
+    name: 'debian:bookworm'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        if [[ -z "$TAG_NAME" ]]; then
+          echo "Not a tag build; skipping dist"
+          exit 0
+        fi
+        echo "Build type: TAG $TAG_NAME"
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq build-essential git libssl-dev zlib1g-dev
+        # dist-native resolves to wrq-linux-amd64 on the x86 worker.
+        make dist-native DIST_DIR=/workspace/dist
+
+  - id: Release
+    name: 'gcr.io/${PROJECT_ID}/home_port:debian-13-20260723'
+    entrypoint: 'bash'
+    secretEnv: ['APP_PRIVATE_KEY']
+    env:
+      - 'APP_ID=2176292'
+    args:
+      - '-c'
+      - |
+        set -e
+        if [[ -z "$TAG_NAME" ]]; then
+          echo "Not a tag build; skipping release"
+          exit 0
+        fi
+
+        api=https://api.github.com
+        repo=ripta/wrq
+
+        b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+        now=$(date +%s)
+        header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+        payload=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$$((now-60))" "$$((now+540))" "$$APP_ID" | b64url)
+        sig=$(printf '%s.%s' "$$header" "$$payload" \
+          | openssl dgst -sha256 -sign <(printf '%s' "$$APP_PRIVATE_KEY") | b64url)
+        jwt="$$header.$$payload.$$sig"
+
+        inst_id=$(curl -sf -H "Authorization: Bearer $$jwt" \
+          -H "Accept: application/vnd.github+json" "$$api/repos/$$repo/installation" | jq -r '.id')
+        export GH_TOKEN=$(curl -sf -X POST -H "Authorization: Bearer $$jwt" \
+          -H "Accept: application/vnd.github+json" \
+          "$$api/app/installations/$$inst_id/access_tokens" | jq -r '.token')
+
+        # gh rejects --notes-from-tag with --repo, so fetch the tag annotation via the API.
+        tag_sha=$(curl -sf -H "Authorization: token $$GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "$$api/repos/$$repo/git/ref/tags/$TAG_NAME" | jq -r '.object.sha')
+        notes=$(curl -sf -H "Authorization: token $$GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "$$api/repos/$$repo/git/tags/$$tag_sha" | jq -r '.message')
+
+        gh release create "$TAG_NAME" --repo "$$repo" --verify-tag --notes "$$notes" /workspace/dist/*
+
 timeout: 1800s
 
 options:
   dynamicSubstitutions: true
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/beermaid-app-key/versions/latest
+      env: 'APP_PRIVATE_KEY'
