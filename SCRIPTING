@@ -110,3 +110,28 @@ Done
       timeout = N  -- total request timeouts
     }
   }
+
+JSON
+
+  LuaJIT ships no JSON library. wrq bundles scripts/json.lua for encoding
+  and parsing JSON payloads. Require it in your script:
+
+    local json = require("json")
+
+  json.encode(value) returns a JSON string. json.decode(str) returns the
+  parsed Lua value. Use them to build request bodies and read responses:
+
+    wrk.method = "POST"
+    wrk.body   = json.encode({ user = "alice", roles = { "admin" } })
+    wrk.headers["Content-Type"] = "application/json"
+
+    function response(status, headers, body)
+      local data = json.decode(body)
+    end
+
+  require("json") resolves against the current working directory, not the
+  script's directory. Run wrq from the repo root, or add the script path:
+
+    package.path = "scripts/?.lua;" .. package.path
+
+  See scripts/post-json.lua for a complete example.
