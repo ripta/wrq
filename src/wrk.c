@@ -1,4 +1,5 @@
 // Copyright (C) 2012 - Will Glozer.  All rights reserved.
+// Modified from wrk and wrk2 by wrq contributors.
 
 #include "wrk.h"
 #include "script.h"
@@ -9,6 +10,8 @@
 
 // Max recordable latency of 1 day
 #define MAX_LATENCY 24L * 60 * 60 * 1000000
+
+enum { PARSE_VERSION = 2 };
 
 static struct config {
     uint64_t     threads;
@@ -70,7 +73,7 @@ static void handler(int sig) {
 }
 
 static void usage() {
-    printf("Usage: wrk <options> <url>                            \n"
+    printf("Usage: wrq <options> <url>                            \n"
            "  Options:                                            \n"
            "    -c, --connections <N>  Connections to keep open   \n"
            "        --connect-delay <N> Delay (ms) between opening\n"
@@ -91,6 +94,7 @@ static void usage() {
            "    -B, --batch_latency    Measure latency of whole   \n"
            "                           batches of pipelined ops   \n"
            "                           (as opposed to each op)    \n"
+           "    -h, --help             Print this help            \n"
            "    -v, --version          Print version details      \n"
            "    -R, --rate        <T>  work rate (throughput)     \n"
            "                           in requests/sec (total)    \n"
@@ -105,9 +109,10 @@ int main(int argc, char **argv) {
     char *url, **headers = zmalloc(argc * sizeof(char *));
     struct http_parser_url parts = {};
 
-    if (parse_args(&cfg, &url, &parts, headers, argc, argv)) {
-        usage();
-        exit(1);
+    int parse_status = parse_args(&cfg, &url, &parts, headers, argc, argv);
+    if (parse_status) {
+        if (parse_status != PARSE_VERSION) usage();
+        exit(parse_status < 0 ? 1 : 0);
     }
 
     char *schema  = copy_url_part(url, &parts, UF_SCHEMA);
@@ -919,7 +924,7 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
     config->delay_ms    = 5;
     config->record_all_responses = true;
 
-    while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "a:t:c:d:s:H:T:R:LUBhrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 'a':
                 if (!affinity_supported()) {
@@ -980,10 +985,11 @@ static int parse_args(struct config *config, char **url, struct http_parser_url 
                 config->client_key = optarg;
                 break;
             case 'v':
-                printf("wrk %s [%s] ", VERSION, aeGetApiName());
+                printf("wrq %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
-                break;
+                return PARSE_VERSION;
             case 'h':
+                return 1;
             case '?':
             case ':':
             default:

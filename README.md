@@ -1,59 +1,30 @@
-# wrk2
-[![Build Status](https://travis-ci.com/giltene/wrk2.svg?branch=master)](https://travis-ci.com/giltene/wrk2) [![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/giltene/wrk2?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+# wrq
 
-  **a HTTP benchmarking tool based mostly on wrk**
+**wrq is an HTTP benchmarking tool and a fork of
+[wrk2](https://github.com/giltene/wrk2).**
 
-  wrk2 is wrk modifed to produce a constant throughput load, and
-  accurate latency details to the high 9s (i.e. can produce
-  accurate 99.9999%'ile when run long enough). In addition to
-  wrk's arguments, wrk2 takes a throughput argument (in total requests
-  per second) via either the --rate or -R parameters (default
-  is 1000).
+wrk2 modified wrk to produce a constant-throughput load and accurate latency
+details to the high nines (for example, an accurate 99.9999th percentile when
+run long enough). wrq continues that work. In addition to wrk's arguments, wrq
+takes a throughput argument, in total requests per second, through `--rate` or
+`-R` (the default is 1000).
 
-  CRITICAL NOTE: Before going farther, I'd like to make it clear that
-  this work is in no way intended to be an attack on or a disparagement
-  of the great work that Will Glozer has done with wrk. I enjoyed working
-  with his code, and I sincerely hope that some of the changes I had made
-  might be considered for inclusion back into wrk. As those of you who may
-  be familiar with my latency related talks and rants, the latency
-  measurement issues that I focused on fixing with wrk2 are extremely
-  common in load generators and in monitoring code. I do not
-  ascribe any lack of skill or intelligence to people who's creations
-  repeat them. I was once (as recently as 2-3 years ago) just as
-  oblivious to the effects of Coordinated Omission as the rest of
-  the world still is.
+wrq uses HdrHistogram instead of wrk's individual request sample buffers. It
+retains wrk's Lua API, including its presentation of the latency and request
+statistics objects, so existing wrk and wrk2 scripts continue to use the
+`wrk` Lua table. Those objects are backed by HdrHistogram; requesting a raw
+sample at index *i* returns the value at the corresponding percentile
+(`100.0 * i / __len`).
 
-  wrk2 replaces wrk's individual request sample buffers with
-  HdrHistograms. wrk2 maintains wrk's Lua API, including it's
-  presentation of the stats objects (latency and requests). The stats
-  objects are "emulated" using HdrHistograms. E.g. a request for a
-  raw sample value at index i (see latency[i] below) will return
-  the value at the associated percentile (100.0 * i / __len).
+The combination of full histogram recording, constant-throughput load
+generation, and latency measurement from the time a request was scheduled to
+the time its response arrived avoids coordinated omission. The current
+constant-throughput implementation measures latency at approximately 1 ms
+granularity because of operating-system sleep behavior.
 
-  As a result of using HdrHistograms for full (lossless) recording,
-  constant throughput load generation, and accurate tracking of
-  response latency (from the point in time where a request was supposed
-  to be sent per the "plan" to the time that it actually arrived), wrk2's
-  latency reporting is significantly more accurate (as in "correct") than
-  that of wrk's current (Nov. 2014) execution model.
-
-  It is important to note that in wrk2's current constant-throughput
-  implementation, measured latencies are [only] accurate to a +/- ~1 msec
-  granularity, due to OS sleep time behavior.
-
-  wrk2 is currently in experimental/development mode, and may well be
-  merged into wrk in the future if others see fit to adopt it's changes.
-
-  The remaining part of the README is wrk's, with minor changes to
-  reflect additional parameter and output. There is an important and
-  detailed note at the end about about wrk2's latency measurement
-  technique, including a discussion of Coordinated Omission, how
-  wrk2 avoids it, and detailed output that demonstrates it.
-
-  wrk2 (as is wrk) is a modern HTTP benchmarking tool capable of generating
-  significant load when run on a single multi-core CPU. It combines a
-  multithreaded design with scalable event notification systems such as
-  epoll and kqueue.
+wrq is capable of generating significant load on a single multi-core CPU. It
+combines a multithreaded design with scalable event notification systems such
+as epoll and kqueue.
 
   An optional LuaJIT script can perform HTTP request generation, response
   processing, and custom reporting. Several example scripts are located in
@@ -61,7 +32,7 @@
 
 ## Basic Usage
 
-    wrk -t2 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
+    wrq -t2 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
 
   This runs a benchmark for 30 seconds, using 2 threads, keeping
   100 HTTP connections open, and a constant throughput of 2000 requests
@@ -70,7 +41,7 @@
   Initial connections are opened 5ms apart within each worker thread. Use
   `--connect-delay` to change that interval and smooth out startup further:
 
-    wrk -t2 -c500 -d30s -R2000 --connect-delay 20 http://127.0.0.1:8080/
+    wrq -t2 -c500 -d30s -R2000 --connect-delay 20 http://127.0.0.1:8080/
 
   In this example, each thread opens one of its 250 connections every 20ms.
   A value of `0` disables connection staggering.
@@ -78,25 +49,25 @@
   On Linux, worker threads can be pinned to selected CPUs with `-a` or
   `--affinity`. The value accepts comma-separated CPU numbers and ranges:
 
-    wrk -t4 -a 0,1,7,8 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
-    wrk -t4 --affinity 0-3 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
+    wrq -t4 -a 0,1,7,8 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
+    wrq -t4 --affinity 0-3 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
 
   CPUs are assigned to worker threads in the order given. If there are more
   threads than CPUs, the list is reused from the beginning. When affinity is
-  omitted, wrk2 does not change the threads' affinity.
+  omitted, wrq does not change the threads' affinity.
 
   Mutual TLS is supported with a PEM client certificate chain and private key:
 
-    wrk --cacert company-ca.pem --client-cert client.pem \
+    wrq --cacert company-ca.pem --client-cert client.pem \
         --client-key client.key -c10 -d30s -R100 https://service.example.com/
 
   `--client-cert` and `--client-key` must be used together. Supplying them
   enables server certificate and hostname verification using OpenSSL's default
   trust paths. `--cacert <file>` and `--capath <directory>` add private trust
   anchors; either option also enables verification when used without a client
-  certificate. HTTPS without any TLS options retains wrk2's existing behavior.
+  certificate. HTTPS without any TLS options retains wrq's existing behavior.
 
-  [It's important to note that wrk2 extends the initial calibration
+  [It's important to note that wrq extends the initial calibration
    period to 10 seconds (from wrk's 0.5 second), so runs shorter than
    10-20 seconds may not present useful information]
 
@@ -113,12 +84,12 @@
     Requests/sec:   2000.15
     Transfer/sec:    676.14KB
 
-  However, wrk2 will usually be run with the --latency flag, which provides
+  However, wrq will usually be run with the --latency flag, which provides
   detailed latency percentile information (in a format that can be easily
   imported to spreadsheets or gnuplot scripts and plotted per examples
   provided at http://hdrhistogram.org):
 
-    wrk -t2 -c100 -d30s -R2000 --latency http://127.0.0.1:80/index.html
+    wrq -t2 -c100 -d30s -R2000 --latency http://127.0.0.1:80/index.html
 
   Output:
 
@@ -260,7 +231,7 @@
     global done     -- optional function called with results of run
 
   The init() function receives any extra command line arguments for the
-  script. Script arguments must be separated from wrk arguments with "--"
+  script. Script arguments must be separated from wrq arguments with "--"
   and scripts that override init() but not request() must call wrk.init()
 
   The done() function receives a table containing result data, and two
@@ -290,7 +261,7 @@
 
 ## Benchmarking Tips
 
-  The machine running wrk must have a sufficient number of ephemeral ports
+  The machine running wrq must have a sufficient number of ephemeral ports
   available and closed sockets should be recycled quickly. To handle the
   initial connection burst the server's listen(2) backlog should be greater
   than the number of concurrent connections being tested.
@@ -304,13 +275,12 @@
 
 ## Acknowledgements
 
-  wrk2 is obviously based on wrk, and credit goes to wrk's authors for
-  pretty much everything.
+  wrq is a fork of wrk2, which is based on wrk. Credit goes to Gil Tene,
+  Mike Barker, Will Glozer, and the other contributors to those projects.
 
-  wrk2 uses my (Gil Tene's) HdrHistogram. Specifically, the C port written
-  by Mike Barker. Details can be found at http://hdrhistogram.org . Mike
-  also started the work on this wrk modification, but as he was stuck
-  on a plane ride to New Zealand, I picked it up and ran it to completion.
+  wrk2 incorporated Gil Tene's HdrHistogram, specifically the C port written
+  by Mike Barker. Details can be found at http://hdrhistogram.org. Mike also
+  began the original wrk modification that became wrk2.
 
   wrk contains code from a number of open source projects including the
   'ae' event loop from redis, the nginx/joyent/node.js 'http-parser',
@@ -319,9 +289,9 @@
 
 ************************************************************************
 
-A note about wrk2's latency measurement technique:
+A note about wrq's latency measurement technique:
 
-  One of wrk2's main modification to wrk's current (Nov. 2014) measurement
+  One of wrq's main modifications to wrk's November 2014 measurement
   model has to do with how request latency is computed and recorded.
 
   wrk's model, which is similar to the model found in many current load
@@ -350,11 +320,11 @@ A note about wrk2's latency measurement technique:
   blocking protocol (as is the case with most TCP and HTTP workloads),
   this completely asynchronous behavior is usually not a viable option.
 
-  The model I chose for avoiding Coordinated Omission in wrk2 combines
+  The model inherited from wrk2 for avoiding Coordinated Omission combines
   the use of constant throughput load generation with latency
   measurement that takes the intended constant throughput into account.
   Rather than measure response latency from the time that the actual
-  transmission of a request occurred, wrk2 measures response latency
+  transmission of a request occurred, wrq measures response latency
   from the time the transmission *should* have occurred according to the
   constant throughput configured for the run. When responses take longer
   than normal (arriving later than the next request should have been sent),
@@ -370,10 +340,10 @@ A note about wrk2's latency measurement technique:
         information.
 
   In order to demonstrate the significant difference between the two
-  latency recording techniques, wrk2 also tracks an internal "uncorrected
+  latency recording techniques, wrq also tracks an internal "uncorrected
   latency histogram" that can be reported on using the --u_latency flag.
   The following chart depicts the differences between the correct and
-  the "uncorrected" percentile distributions measured during wrk2 runs.
+  the "uncorrected" percentile distributions measured during wrq runs.
   (The "uncorrected" distributions are labeled with "CO", for Coordinated
   Omission)
   
@@ -385,13 +355,13 @@ A note about wrk2's latency measurement technique:
 
   The first ["Example 1" below] is a relatively "quiet" run with no large
   outliers (the worst case seen was 11msec), and even wit the 99'%ile exhibit
-  a ~2x ratio between wrk2's latency measurement and that of an uncorrected
+  a ~2x ratio between wrq's latency measurement and that of an uncorrected
   latency scheme.
 
   The second run ["Example 2" below] includes a single small (1.4sec)
   disruption (introduced using ^Z on the apache process for simple effect).
   As can be seen in the output, there is a dramatic difference between the
-  reported percentiles in the two measurement techniques, with wrk2's latency
+  reported percentiles in the two measurement techniques, with wrq's latency
   report [correctly] reporting a 99%'ile that is 200x (!!!) larger than that
   of the traditional measurement technique that was susceptible to Coordinated
   Omission.
@@ -401,7 +371,7 @@ A note about wrk2's latency measurement technique:
 
 Example 1: [short, non-noisy run (~11msec worst observed latency)]:
 
-    wrk -t2 -c100 -d30s -R2000 --u_latency http://127.0.0.1:80/index.html
+    wrq -t2 -c100 -d30s -R2000 --u_latency http://127.0.0.1:80/index.html
  
     Running 30s test @ http://127.0.0.1:80/index.html
       2 threads and 100 connections
@@ -613,7 +583,7 @@ Example 1: [short, non-noisy run (~11msec worst observed latency)]:
 
 Example 2: [1.4 second ^Z artifact introduced on the httpd server]:
  
-    wrk -t2 -c100 -d30s -R2000 --u_latency http://127.0.0.1:80/index.html
+    wrq -t2 -c100 -d30s -R2000 --u_latency http://127.0.0.1:80/index.html
  
     Running 30s test @ http://127.0.0.1:80/index.html
       2 threads and 100 connections

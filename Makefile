@@ -28,7 +28,8 @@ endif
 
 SRC  := wrk.c affinity.c net.c ssl.c aprintf.c stats.c script.c units.c \
 		ae.c zmalloc.c http_parser.c tinymt64.c hdr_histogram.c
-BIN  := wrk
+BIN  := wrq
+LEGACY_BIN := wrk
 
 # Build with sanitizers. Run `make clean` when toggling SANITIZE.
 #   make SANITIZE=1           # address,undefined
@@ -71,7 +72,7 @@ LDFLAGS += -L$(LDIR)
 all: $(BIN)
 
 clean:
-	$(RM) $(BIN) obj/*
+	$(RM) $(BIN) $(LEGACY_BIN) obj/*
 	@$(MAKE) -C deps/luajit clean
 
 $(BIN): $(OBJ)
@@ -126,7 +127,7 @@ ci-matrix: ## Build and test under each compiler in CI_COMPILERS
 
 # Each suite appends itself here as it lands, so ci-matrix and cloudbuild.yaml
 # never need to change to pick one up.
-test: test-affinity test-thread-start ## Run all tests
+test: test-affinity test-thread-start test-cli-help ## Run all tests
 
 test-affinity: | $(ODIR) ## Test CPU affinity list parsing
 	@$(CC) $(CFLAGS) -Isrc -o $(ODIR)/affinity_test \
@@ -136,7 +137,11 @@ test-affinity: | $(ODIR) ## Test CPU affinity list parsing
 test-thread-start: $(BIN) ## Test synchronized worker benchmark start
 	@python3 tests/thread_start_timing_test.py ./$(BIN)
 
-.PHONY: all ci ci-matrix clean cppcheck test test-affinity test-thread-start
+test-cli-help: $(BIN) ## Test CLI help flags
+	@python3 tests/cli_help_test.py ./$(BIN)
+
+.PHONY: all ci ci-matrix clean cppcheck test test-affinity test-thread-start \
+	test-cli-help
 .SUFFIXES:
 .SUFFIXES: .c .o .lua
 
