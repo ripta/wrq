@@ -67,6 +67,16 @@
   100 HTTP connections open, and a constant throughput of 2000 requests
   per second (total, across all connections combined).
 
+  On Linux, worker threads can be pinned to selected CPUs with `-a` or
+  `--affinity`. The value accepts comma-separated CPU numbers and ranges:
+
+    wrk -t4 -a 0,1,7,8 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
+    wrk -t4 --affinity 0-3 -c100 -d30s -R2000 http://127.0.0.1:8080/index.html
+
+  CPUs are assigned to worker threads in the order given. If there are more
+  threads than CPUs, the list is reused from the beginning. When affinity is
+  omitted, wrk2 does not change the threads' affinity.
+
   [It's important to note that wrk2 extends the initial calibration
    period to 10 seconds (from wrk's 0.5 second), so runs shorter than
    10-20 seconds may not present useful information]
