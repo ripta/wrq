@@ -38,5 +38,3 @@ unreadVariable:src/units.c:89
 clarifyCalculation:src/script.c:522
 # `i` is a loop index reused across the function. Intentional.
 variableScope:src/units.c:61
-# parse_args() intentionally uses a local `cfg` matching the global name.
-shadowVariable:src/wrk.c:710

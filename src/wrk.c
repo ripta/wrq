@@ -706,51 +706,51 @@ static struct option longopts[] = {
     { NULL,             0,                 NULL,  0  }
 };
 
-static int parse_args(struct config *cfg, char **url, struct http_parser_url *parts, char **headers, int argc, char **argv) {
+static int parse_args(struct config *config, char **url, struct http_parser_url *parts, char **headers, int argc, char **argv) {
     int c;
     char **header = headers;
 
-    memset(cfg, 0, sizeof(struct config));
-    cfg->threads     = 2;
-    cfg->connections = 10;
-    cfg->duration    = 10;
-    cfg->timeout     = SOCKET_TIMEOUT_MS;
-    cfg->rate        = 0;
-    cfg->record_all_responses = true;
+    memset(config, 0, sizeof(struct config));
+    config->threads     = 2;
+    config->connections = 10;
+    config->duration    = 10;
+    config->timeout     = SOCKET_TIMEOUT_MS;
+    config->rate        = 0;
+    config->record_all_responses = true;
 
     while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
-                if (scan_metric(optarg, &cfg->threads)) return -1;
+                if (scan_metric(optarg, &config->threads)) return -1;
                 break;
             case 'c':
-                if (scan_metric(optarg, &cfg->connections)) return -1;
+                if (scan_metric(optarg, &config->connections)) return -1;
                 break;
             case 'd':
-                if (scan_time(optarg, &cfg->duration)) return -1;
+                if (scan_time(optarg, &config->duration)) return -1;
                 break;
             case 's':
-                cfg->script = optarg;
+                config->script = optarg;
                 break;
             case 'H':
                 *header++ = optarg;
                 break;
             case 'L':
-                cfg->latency = true;
+                config->latency = true;
                 break;
             case 'B':
-                cfg->record_all_responses = false;
+                config->record_all_responses = false;
                 break;
             case 'U':
-                cfg->latency = true;
-                cfg->u_latency = true;
+                config->latency = true;
+                config->u_latency = true;
                 break;
             case 'T':
-                if (scan_time(optarg, &cfg->timeout)) return -1;
-                cfg->timeout *= 1000;
+                if (scan_time(optarg, &config->timeout)) return -1;
+                config->timeout *= 1000;
                 break;
             case 'R':
-                if (scan_metric(optarg, &cfg->rate)) return -1;
+                if (scan_metric(optarg, &config->rate)) return -1;
                 break;
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
@@ -764,19 +764,19 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
         }
     }
 
-    if (optind == argc || !cfg->threads || !cfg->duration) return -1;
+    if (optind == argc || !config->threads || !config->duration) return -1;
 
     if (!script_parse_url(argv[optind], parts)) {
         fprintf(stderr, "invalid URL: %s\n", argv[optind]);
         return -1;
     }
 
-    if (!cfg->connections || cfg->connections < cfg->threads) {
+    if (!config->connections || config->connections < config->threads) {
         fprintf(stderr, "number of connections must be >= threads\n");
         return -1;
     }
 
-    if (cfg->rate == 0) {
+    if (config->rate == 0) {
         fprintf(stderr,
                 "Throughput MUST be specified with the --rate or -R option\n");
         return -1;
