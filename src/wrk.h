@@ -24,6 +24,9 @@
 #define SOCKET_TIMEOUT_MS   2000
 #define CALIBRATE_DELAY_MS  10000
 #define TIMEOUT_INTERVAL_MS 2000
+#define RECONNECT_BACKOFF_MIN_MS 10
+#define RECONNECT_BACKOFF_MAX_MS 1000
+#define RECONNECT_BACKOFF_JITTER 20
 
 typedef struct {
     pthread_t thread;
@@ -62,22 +65,27 @@ typedef struct connection {
     SSL *ssl;
     double throughput;
     double catch_up_throughput;
-    uint64_t complete;
-    uint64_t complete_at_last_batch_start;
+    uint64_t scheduled;
+    uint64_t scheduled_at_last_batch_start;
     uint64_t catch_up_start_time;
-    uint64_t complete_at_catch_up_start;
+    uint64_t scheduled_at_catch_up_start;
     uint64_t thread_start;
     uint64_t start;
     char *request;
     size_t length;
     size_t written;
     uint64_t pending;
+    uint64_t reconnect_failures;
+    long long request_timer;
+    long long reconnect_timer;
     buffer headers;
     buffer body;
     char buf[RECVBUF];
     uint64_t actual_latency_start;
+    bool batch_scheduled;
     bool has_pending;
     bool caught_up;
+    bool peer_closed;
     // Internal tracking numbers (used purely for debugging):
     uint64_t latest_should_send_time;
     uint64_t latest_expected_start;

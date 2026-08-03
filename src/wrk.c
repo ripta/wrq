@@ -273,8 +273,10 @@ void *thread_main(void *arg) {
         c->length     = length;
         c->throughput = throughput;
         c->catch_up_throughput = throughput * 2;
-        c->complete   = 0;
         c->caught_up  = true;
+        c->request_timer = AE_NOMORE;
+        c->reconnect_timer = AE_NOMORE;
+        c->fd = -1;
         // Stagger connects 5 msec apart within thread:
         aeCreateTimeEvent(loop, i * 5, delayed_initial_connect, c, NULL);
     }
@@ -294,18 +296,56 @@ void *thread_main(void *arg) {
     return NULL;
 }
 
+// Warn once per resource-exhaustion errno so the cause of silent connect
+// failures is visible. Called from any worker thread, so guard the flags.
+static void warn_connect_error(int err) {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    static bool warned_files = false;
+    static bool warned_ports = false;
+
+    bool *flag;
+    const char *fmt;
+
+    switch (err) {
+        case EMFILE:
+        case ENFILE:
+            flag = &warned_files;
+            fmt  = "socket() failed: %s.\n"
+                   "  The open-file limit is too low for this many connections.\n"
+                   "  Raise it with `ulimit -n <N>` before running wrq.\n";
+            break;
+        case EADDRNOTAVAIL:
+            flag = &warned_ports;
+            fmt  = "connect() failed: %s.\n"
+                   "  Ran out of local ports. One client cannot open this many\n"
+                   "  connections to a single address. Use fewer connections,\n"
+                   "  more target addresses, or more load generators.\n";
+            break;
+        default:
+            return;
+    }
+
+    pthread_mutex_lock(&lock);
+    if (!*flag) {
+        *flag = true;
+        fprintf(stderr, fmt, strerror(err));
+    }
+    pthread_mutex_unlock(&lock);
+}
+
 static int connect_socket(thread *thread, connection *c) {
     struct addrinfo *addr = thread->addr;
     struct aeEventLoop *loop = thread->loop;
-    int fd, flags;
+    int fd, flags, err = 0;
 
     fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+    if (fd == -1) { err = errno; goto error; }
 
     flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     if (connect(fd, addr->ai_addr, addr->ai_addrlen) == -1) {
-        if (errno != EINPROGRESS) goto error;
+        if (errno != EINPROGRESS) { err = errno; goto error; }
     }
 
     flags = 1;
@@ -322,15 +362,66 @@ static int connect_socket(thread *thread, connection *c) {
 
   error:
     thread->errors.connect++;
-    close(fd);
+    if (err) warn_connect_error(err);
+    if (fd >= 0) close(fd);
+    schedule_reconnect(thread, c);
     return -1;
 }
 
-static int reconnect_socket(thread *thread, connection *c) {
-    aeDeleteFileEvent(thread->loop, c->fd, AE_WRITABLE | AE_READABLE);
-    sock.close(c);
-    close(c->fd);
-    return connect_socket(thread, c);
+static void schedule_reconnect(thread *thread, connection *c) {
+    aeEventLoop *loop = thread->loop;
+
+    if (c->request_timer != AE_NOMORE) {
+        aeDeleteTimeEvent(loop, c->request_timer);
+        c->request_timer = AE_NOMORE;
+    }
+
+    if (c->fd >= 0) {
+        aeDeleteFileEvent(loop, c->fd, AE_WRITABLE | AE_READABLE);
+        sock.close(c);
+        close(c->fd);
+        c->fd = -1;
+    }
+
+    c->written = 0;
+    c->batch_scheduled = false;
+    c->pending = 0;
+    c->has_pending = false;
+
+    if (c->reconnect_timer == AE_NOMORE) {
+        long long delay = reconnect_delay(c);
+        c->reconnect_timer = aeCreateTimeEvent(
+                loop, delay, reconnect_socket, c, NULL);
+        if (c->reconnect_timer != AE_ERR &&
+                c->reconnect_failures != UINT64_MAX) {
+            c->reconnect_failures++;
+        }
+    }
+}
+
+static long long reconnect_delay(connection *c) {
+    if (c->reconnect_failures == 0) return 0;
+
+    uint64_t delay = RECONNECT_BACKOFF_MIN_MS;
+    uint64_t failures = c->reconnect_failures;
+
+    while (--failures && delay < RECONNECT_BACKOFF_MAX_MS) {
+        delay = MIN(delay * 2, RECONNECT_BACKOFF_MAX_MS);
+    }
+
+    uint64_t jitter = (delay * RECONNECT_BACKOFF_JITTER) / 100;
+    uint64_t range = (jitter * 2) + 1;
+    uint64_t random = tinymt64_generate_uint64(&c->thread->rand);
+    uint64_t randomized = delay - jitter + (random % range);
+
+    return MIN(randomized, RECONNECT_BACKOFF_MAX_MS);
+}
+
+static int reconnect_socket(aeEventLoop *loop, long long id, void *data) {
+    connection *c = data;
+    c->reconnect_timer = AE_NOMORE;
+    connect_socket(c->thread, c);
+    return AE_NOMORE;
 }
 
 static int delayed_initial_connect(aeEventLoop *loop, long long id, void *data) {
@@ -375,8 +466,9 @@ static int check_timeouts(aeEventLoop *loop, long long id, void *data) {
     uint64_t maxAge = now - (cfg.timeout * 1000);
 
     for (uint64_t i = 0; i < thread->connections; i++, c++) {
-        if (maxAge > c->start) {
+        if (c->has_pending && maxAge > c->start) {
             thread->errors.timeout++;
+            schedule_reconnect(thread, c);
         }
     }
 
@@ -432,7 +524,7 @@ static int response_body(http_parser *parser, const char *at, size_t len) {
 static uint64_t usec_to_next_send(connection *c) {
     uint64_t now = time_us();
 
-    uint64_t next_start_time = c->thread_start + (c->complete / c->throughput);
+    uint64_t next_start_time = c->thread_start + (c->scheduled / c->throughput);
 
     bool send_now = true;
 
@@ -446,15 +538,15 @@ static uint64_t usec_to_next_send(connection *c) {
             // This is the first fall-behind since we were last caught up
             c->caught_up = false;
             c->catch_up_start_time = now;
-            c->complete_at_catch_up_start = c->complete;
+            c->scheduled_at_catch_up_start = c->scheduled;
         }
 
         // Figure out if it's time to send, per catch up throughput:
-        uint64_t complete_since_catch_up_start =
-                c->complete - c->complete_at_catch_up_start;
+        uint64_t scheduled_since_catch_up_start =
+                c->scheduled - c->scheduled_at_catch_up_start;
 
         next_start_time = c->catch_up_start_time +
-                (complete_since_catch_up_start / c->catch_up_throughput);
+                (scheduled_since_catch_up_start / c->catch_up_throughput);
 
         if (next_start_time > now) {
             // Not yet time to send, even at catch-up throughput:
@@ -476,6 +568,7 @@ static int delay_request(aeEventLoop *loop, long long id, void *data) {
     if (time_usec_to_wait) {
         return round((time_usec_to_wait / 1000.0L) + 0.5); /* don't send, wait */
     }
+    c->request_timer = AE_NOMORE;
     aeCreateFileEvent(c->thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
     return AE_NOMORE;
 }
@@ -488,6 +581,7 @@ static int response_complete(http_parser *parser) {
 
     thread->complete++;
     thread->requests++;
+    c->reconnect_failures = 0;
 
     if (status > 399) {
         thread->errors.status++;
@@ -504,18 +598,15 @@ static int response_complete(http_parser *parser) {
         goto done;
     }
 
-    // Count all responses (including pipelined ones:)
-    c->complete++;
-
-    // Note that expected start time is computed based on the completed
-    // response count seen at the beginning of the last request batch sent.
+    // Note that expected start time is computed based on the scheduled
+    // request count seen at the beginning of the last request batch sent.
     // A single request batch send may contain multiple requests, and
     // result in multiple responses. If we incorrectly calculated expected
-    // start time based on the completion count of these individual pipelined
+    // start time based on the scheduled position of individual pipelined
     // requests we can easily end up "gifting" them time and seeing
     // negative latencies.
     uint64_t expected_latency_start = c->thread_start +
-            (c->complete_at_last_batch_start / c->throughput);
+            (c->scheduled_at_last_batch_start / c->throughput);
 
     int64_t expected_latency_timing = now - expected_latency_start;
 
@@ -529,7 +620,7 @@ static int response_complete(http_parser *parser) {
         printf("  now = %"PRIu64"\n", now);
         printf("  expected_latency_start = %"PRIu64"\n", expected_latency_start);
         printf("  c->thread_start = %"PRIu64"\n", c->thread_start);
-        printf("  c->complete = %"PRIu64"\n", c->complete);
+        printf("  c->scheduled = %"PRIu64"\n", c->scheduled);
         printf("  throughput = %g\n", c->throughput);
         printf("  latest_should_send_time = %"PRIu64"\n", c->latest_should_send_time);
         printf("  latest_expected_start = %"PRIu64"\n", c->latest_expected_start);
@@ -537,7 +628,7 @@ static int response_complete(http_parser *parser) {
         printf("  latest_write = %"PRIu64"\n", c->latest_write);
 
         expected_latency_start = c->thread_start +
-                ((c->complete ) / c->throughput);
+                (c->scheduled / c->throughput);
         printf("  next expected_latency_start = %"PRIu64"\n", expected_latency_start);
     }
 
@@ -559,7 +650,7 @@ static int response_complete(http_parser *parser) {
 
 
     if (!http_should_keep_alive(parser)) {
-        reconnect_socket(thread, c);
+        if (!c->peer_closed) schedule_reconnect(thread, c);
         goto done;
     }
 
@@ -576,6 +667,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
+        case CLOSED: goto error;
     }
 
     http_parser_init(&c->parser, HTTP_RESPONSE);
@@ -589,7 +681,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
 
   error:
     c->thread->errors.connect++;
-    reconnect_socket(c->thread, c);
+    schedule_reconnect(c->thread, c);
 
 }
 
@@ -597,21 +689,23 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
     thread *thread = c->thread;
 
-    if (!c->written) {
+    if (!c->batch_scheduled) {
         uint64_t time_usec_to_wait = usec_to_next_send(c);
         if (time_usec_to_wait) {
-            int msec_to_wait = round((time_usec_to_wait / 1000.0L) + 0.5);
-
             // Not yet time to send. Delay:
             aeDeleteFileEvent(loop, fd, AE_WRITABLE);
-            aeCreateTimeEvent(
-                    thread->loop, msec_to_wait, delay_request, c, NULL);
+            if (c->request_timer == AE_NOMORE) {
+                int msec_to_wait = round(
+                        (time_usec_to_wait / 1000.0L) + 0.5);
+                c->request_timer = aeCreateTimeEvent(
+                        thread->loop, msec_to_wait, delay_request, c, NULL);
+            }
             return;
         }
         c->latest_write = time_us();
     }
 
-    if (!c->written && cfg.dynamic) {
+    if (!c->batch_scheduled && cfg.dynamic) {
         script_request(thread->L, &c->request, &c->length);
     }
 
@@ -619,13 +713,15 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     size_t len = c->length  - c->written;
     size_t n;
 
-    if (!c->written) {
+    if (!c->batch_scheduled) {
         c->start = time_us();
         if (!c->has_pending) {
             c->actual_latency_start = c->start;
-            c->complete_at_last_batch_start = c->complete;
             c->has_pending = true;
         }
+        c->scheduled_at_last_batch_start = c->scheduled;
+        c->scheduled += cfg.pipeline;
+        c->batch_scheduled = true;
         c->pending = cfg.pipeline;
     }
 
@@ -633,11 +729,13 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
+        case CLOSED: goto error;
     }
 
     c->written += n;
     if (c->written == c->length) {
         c->written = 0;
+        c->batch_scheduled = false;
         aeDeleteFileEvent(loop, fd, AE_WRITABLE);
     }
 
@@ -645,7 +743,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 
   error:
     thread->errors.write++;
-    reconnect_socket(thread, c);
+    schedule_reconnect(thread, c);
 }
 
 
@@ -658,17 +756,28 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
             case OK:    break;
             case ERROR: goto error;
             case RETRY: return;
+            case CLOSED:
+                c->peer_closed = true;
+                break;
         }
 
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n) goto error;
         c->thread->bytes += n;
+
+        if (c->peer_closed) {
+            c->peer_closed = false;
+            if (c->has_pending) c->thread->errors.read++;
+            schedule_reconnect(c->thread, c);
+            return;
+        }
     } while (n == RECVBUF && sock.readable(c) > 0);
 
     return;
 
   error:
+    c->peer_closed = false;
     c->thread->errors.read++;
-    reconnect_socket(c->thread, c);
+    schedule_reconnect(c->thread, c);
 }
 
 static uint64_t time_us() {
